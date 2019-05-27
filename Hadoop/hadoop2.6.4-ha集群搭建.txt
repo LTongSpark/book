@@ -1,0 +1,304 @@
+
+一共有5台机器
+s121			s122			s123			s124			s125
+				zookeeper		zookeeper		zookeeper
+namenode		datanode		datanode		datanode		namenode
+zkfc			journalnode		journalnode		journalnode		zkfc
+				zookeeper		zookeeper		zookeeper
+				
+				
+1.修改Linux主机名<保证能上网>
+		nano /etc/hostname
+2.修改IP
+		nano /etc/sysconfig/network-scripts/ifcfg-eno16777736
+					TYPE=Ethernet
+					BOOTPROTO=none
+					DEFROUTE=yes
+					IPV4_FAILURE_FATAL=no
+					IPV6INIT=no
+					IPV6_AUTOCONF=no
+					IPV6_DEFROUTE=no
+					IPV6_FAILURE_FATAL=no
+					NAME=eno16777736
+					UUID=caa4cc09-8da2-44b2-aae6-0b906c5c8d91
+					DEVICE=eno16777736
+					ONBOOT=yes
+					PEERDNS=yes
+					PEERROUTES=yes
+					IPV6_PEERDNS=no
+					IPV6_PEERROUTES=no
+					IPADDR=192.168.112.121
+					PREFIX=24
+					GATEWAY=192.168.112.2
+					DNS=192.168.112.2
+	保证能上网：
+		nano /etc/resolv.conf
+		nameserver 192.168.112.2
+
+3.修改主机名和IP的映射关系 /etc/hosts
+				192.168.112.121 s121
+				192.168.112.122 s122
+				192.168.112.123 s123
+				192.168.112.124 s124
+				192.168.112.125 s125
+4.关闭防火墙和selinux
+	临时关闭
+			systemctl stop firewalld.service
+	永久关闭
+			systemctl stop firewalld.service
+			关闭selinux
+				/etc/selinux/config
+				改成SELINUX=disable
+				
+5.ssh免登陆(s121->各个节点的包括自己 ，s125->各个节点的包括自己)
+	在s121和s125上执行
+		ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa
+		复制节点
+	s121
+		ssh-copy-id root@192.168.122.121
+		ssh-copy-id root@192.168.122.122
+		ssh-copy-id root@192.168.122.123
+		ssh-copy-id root@192.168.122.124
+		ssh-copy-id root@192.168.122.125
+	s125
+		ssh-copy-id root@192.168.122.121
+		ssh-copy-id root@192.168.122.122
+		ssh-copy-id root@192.168.122.123
+		ssh-copy-id root@192.168.122.124
+		ssh-copy-id root@192.168.122.125
+		
+		
+		
+6.安装JDK，配置环境变量等
+安装步骤：
+	1.安装配置zooekeeper集群（s122,s123,s124）
+		1.1解压
+			tar -zxvf zookeeper-3.4.5.tar.gz -C /soft/
+		1.2修改配置
+			cd /home/hadoop/app/zookeeper-3.4.5/conf/
+			cp zoo_sample.cfg zoo.cfg
+			nano zoo.cfg
+			修改：dataDir=/home/centos/zk/data
+			在最后添加：
+			server.122=s122:2888:3888
+			server.123=s123:2888:3888
+			server.124=s124:2888:3888
+			保存退出
+		1.3在s122上执行拷贝到其他节点
+			scp -r /soft/zookeeper-3.4.5/ root@s123:/soft/
+			scp -r /soft/zookeeper-3.4.5/ root@s124:/soft/
+			
+			然后创建一个文件夹和myid文件
+			[s122:/home/centos/zk/data/myid]
+					122
+
+			[s123:/home/centos/zk/data/myid]
+					123
+
+			[s124:/home/centos/zk/data/myid]
+					124
+			
+	
+	2.安装配置hadoop集群（在s121上操作）
+		2.1解压
+			tar -zxvf hadoop-2.6.4.tar.gz -C /soft/
+		2.2配置HDFS（hadoop2.0所有的配置文件都在$HADOOP_HOME/etc/hadoop目录下）
+			#将hadoop添加到环境变量中
+			nano /etc/profile
+			export JAVA_HOME=/usr/java/jdk1.7.0_55
+			export HADOOP_HOME=/hadoop/hadoop-2.6.4
+			export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin
+			
+			#hadoop2.0的配置文件全部在$HADOOP_HOME/etc/hadoop下
+			cd /home/hadoop/app/hadoop-2.6.4/etc/hadoop
+			
+			2.2.1修改hadoo-env.sh
+				export JAVA_HOME=/soft/jdk1.7.0_55
+
+###############################################################################			
+修改core-site.xml
+<?xml version="1.0"?>
+<configuration>
+	<property>
+		<name>fs.defaultFS</name>
+		<value>hdfs://mycluster</value>
+	</property>
+	<property>
+  		<name>dfs.journalnode.edits.dir</name>
+  		<value>/home/graduate/hadoop/ha/journalnode</value>
+	</property>
+	<property>
+		 <name>hadoop.tmp.dir</name>
+		<value>/home/graduate/hadoop/ha</value>
+	</property>
+	<property>
+		<name>ha.zookeeper.quorum</name>
+		<value>s121:2181,s122:2181,s123:2181</value>
+	</property>
+</configuration>
+###############################################################################
+修改hdfs-site.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<name>dfs.nameservices</name>
+		<value>mycluster</value>
+	</property>
+
+	<property>
+		<name>dfs.ha.namenodes.mycluster</name>
+		<value>nn1,nn2</value>
+	</property>
+
+	<property>
+		<name>dfs.namenode.rpc-address.mycluster.nn1</name>
+		<value>s121:8020</value>
+	</property>
+	<property>
+		<name>dfs.namenode.rpc-address.mycluster.nn2</name>
+		<value>s125:8020</value>
+	</property>
+
+	<property>
+		<name>dfs.namenode.http-address.mycluster.nn1</name>
+		<value>s121:50070</value>
+	</property>
+	<property>
+		<name>dfs.namenode.http-address.mycluster.nn2</name>
+		<value>s125:50070</value>
+	</property>
+
+	<property>
+		<name>dfs.namenode.shared.edits.dir</name>
+		<value>qjournal://s122:8485;s123:8485;s124:8485/mycluster</value>
+	</property>
+
+	<property>
+		<name>dfs.client.failover.proxy.provider.mycluster</name>
+		<value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+	</property>
+
+	<property>
+		<name>dfs.ha.fencing.methods</name>
+		<value>sshfence</value>
+	</property>
+	<property>
+		<name>dfs.ha.fencing.methods</name>
+			<value>
+				sshfence
+				shell(/bin/true)
+			</value>
+	</property>
+
+	<property>
+		<name>dfs.ha.fencing.ssh.private-key-files</name>
+		<value>/home/graduate/.ssh/id_rsa</value>
+	</property>
+	<property>
+		<name>dfs.ha.automatic-failover.enabled</name>
+		<value>true</value>
+	</property>
+	<property>
+		<name>dfs.replication</name>
+		<value>3</value>
+	</property>
+</configuration>
+###############################################################################
+修改mapred-site.xml
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<name>mapreduce.framework.name</name>
+		<value>yarn</value>
+	</property>
+</configuration>
+###############################################################################
+修改yarn-site.xml
+<?xml version="1.0"?>
+<configuration>
+	<property>
+		<name>yarn.resourcemanager.hostname</name>
+		<value>s121</value>
+	</property>
+	<property>
+		<name>yarn.nodemanager.aux-services</name>
+		<value>mapreduce_shuffle</value>
+	</property>
+	<property>
+		<name>yarn.nodemanager.resource.memory-mb</name>
+		<value>8192</value>
+	</property>
+	<property>
+		<name>yarn.nodemanager.pmem-check-enabled</name>
+		<value>false</value>
+	</property>
+	<property>
+		<name>yarn.nodemanager.vmem-check-enabled</name>
+		<value>false</value>
+	</property>
+
+	<property>
+		<name>yarn.nodemanager.vmem-pmem-ratio</name>
+		<value>2.1</value>
+	</property>
+</configuration>
+###############################################################################
+修改slaves
+					s122
+					s123
+					s124
+			
+		2.4将配置好的hadoop拷贝到其他节点
+			scp -r /soft/hadoop-2.6.4/ root@s122:/soft/
+			scp -r /soft/hadoop-2.6.4/ root@s123:/soft/
+			scp -r /soft/hadoop-2.6.4/ root@s124:/soft/
+			scp -r /soft/hadoop-2.6.4/ root@s125:/soft/
+					
+###注意：严格按照下面的步骤!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		2.5启动zookeeper集群（分别在s122、s123、s124上启动zk）
+			cd /soft/zookeeper-3.4.5/bin/
+			./zkServer.sh start
+			#查看状态：一个leader，两个follower
+			./zkServer.sh status
+			
+		2.6启动journalnode（分别在在s122、s123、s124上执行）
+			cd /soft/hadoop-2.6.4
+			sbin/hadoop-daemon.sh start journalnode
+			#运行jps命令检验，s122、s123、s124上多了JournalNode进程
+		
+		2.7格式化HDFS
+			#在s121上执行命令:
+			hdfs namenode -format
+			启动namenode进程 hadoop-daemon.sh start namenode
+			
+		2.8在s125上执行
+			hdfs namenode -bootstrapStandby（把s121上的格式化的目录引导过来）
+		
+		2.8格式化ZKFC(在s121上执行一次即可)
+			hdfs zkfc -formatZK
+		
+		2.9启动HDFS(在s121上执行)
+			sbin/start-dfs.sh
+
+		2.10启动YARN
+			sbin/start-yarn.sh
+
+		
+	到此，hadoop-2.6.4配置完毕，可以统计浏览器访问:
+		http://s121:50070
+		http://s125:50070
+			
+			
+				
+			
+			
+	
+			
+		
+	
+
+
+
+ 
