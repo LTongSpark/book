@@ -1,0 +1,190 @@
+sqoop
+--------------
+	在rdbms和hadoop之间数据的传输工具。
+	内部使用DBWritable方式进行。
+	1.安装
+		tar 
+		ln
+		PATH
+		source
+	2.验证
+		$>sqoop-version
+
+操纵sqoop
+---------------
+	1.启动hadoop
+		start-all.sh
+
+	2.复制mysql驱动到sqoop/lib下
+		
+	3.sqoop-import 
+		#全量导入
+		将数据从rdbms导入到hdfs。
+		sqoop-import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.231.1:3306/big9 --username root --password root --as-textfile --columns id,name,age --table customers --target-dir /user/centos/customers
+		
+		#增量导入
+		sqoop-import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.231.1:3306/big9 --username root --password root --as-textfile --columns id,name,age --table customers --target-dir /user/centos/customers80 --check-column id --last-value 80 --incremental append
+
+	4.sqoop-export
+		#手动创建mysql下的新表:
+		create table customers2(id int , name varchar(50) ,age int) ;
+
+		#导出
+		sqoop-export --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.231.1:3306/big9 --username root --password root --columns id,name,age --table customers2 --export-dir /user/centos/customers2 -m 3
+		
+	5.和hive交互(不能从hive导出到mysql)
+		5.1)导入数据到hive
+			sqoop-import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.1.2:3306/yclog --username root --password root --table yc_info --hive-import --create-hive-table --hive-table yc.yc_info
+
+	6.导出mysql数据到hbase中
+		#先启动hbase
+		start-hbase.sh
+
+		#不要自动建表。
+
+
+		#开始导入
+		sqoop-import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.231.1:3306/big9 --username root --password root --table customers --hbase-table ns1:customers --column-family f1 --hbase-row-key id
+
+	
+	7.job
+		job是对导入导出的命令命名。
+
+		1.配置conf/sqoop-site.xml
+			<!-- Put Sqoop-specific properties in this file. -->
+			<configuration>
+			  <!--
+				Set the value of this property to explicitly enable third-party
+				ManagerFactory plugins.
+
+				If this is not used, you can alternately specify a set of ManagerFactories
+				in the $SQOOP_CONF_DIR/managers.d/ subdirectory.  Each file should contain
+				one or more lines like:
+				  manager.class.name[=/path/to/containing.jar]
+
+				Files will be consulted in lexicographical order only if this property
+				is unset.
+			  -->
+			  <!--
+			  <property>
+				<name>sqoop.connection.factories</name>
+				<value>com.cloudera.sqoop.manager.DefaultManagerFactory</value>
+				<description>A comma-delimited list of ManagerFactory implementations
+				  which are consulted, in order, to instantiate ConnManager instances
+				  used to drive connections to databases.
+				</description>
+			  </property>
+			  -->
+
+			  <!--
+				Set the value of this property to enable third-party tools.
+
+				If this is not used, you can alternately specify a set of ToolPlugins
+				in the $SQOOP_CONF_DIR/tools.d/ subdirectory.  Each file should contain
+				one or more lines like:
+				  plugin.class.name[=/path/to/containing.jar]
+
+				Files will be consulted in lexicographical order only if this property
+				is unset.
+			  -->
+			  <!--
+			  <property>
+				<name>sqoop.tool.plugins</name>
+				<value></value>
+				<description>A comma-delimited list of ToolPlugin implementations
+				  which are consulted, in order, to register SqoopTool instances which
+				  allow third-party tools to be used.
+				</description>
+			  </property>
+			  -->
+
+			  <!--
+				By default, the Sqoop metastore will auto-connect to a local embedded
+				database stored in ~/.sqoop/. To disable metastore auto-connect, uncomment
+				this next property.
+			  -->
+			  <!--
+			  <property>
+				<name>sqoop.metastore.client.enable.autoconnect</name>
+				<value>false</value>
+				<description>If true, Sqoop will connect to a local metastore
+				  for job management when no other metastore arguments are
+				  provided.
+				</description>
+			  </property>
+			  -->
+
+			  <!--
+				The auto-connect metastore is stored in ~/.sqoop/. Uncomment
+				these next arguments to control the auto-connect process with
+				greater precision.
+			  -->
+			  <!--
+			  <property>
+				<name>sqoop.metastore.client.autoconnect.url</name>
+				<value>jdbc:hsqldb:file:/tmp/sqoop-meta/meta.db;shutdown=true</value>
+				<description>The connect string to use when connecting to a
+				  job-management metastore. If unspecified, uses ~/.sqoop/.
+				  You can specify a different path here.
+				</description>
+			  </property>
+			  <property>
+				<name>sqoop.metastore.client.autoconnect.username</name>
+				<value>SA</value>
+				<description>The username to bind to the metastore.
+				</description>
+			  </property>
+			  <property>
+				<name>sqoop.metastore.client.autoconnect.password</name>
+				<value></value>
+				<description>The password to bind to the metastore.
+				</description>
+			  </property>
+			  -->
+
+			  <!--
+				For security reasons, by default your database password will not be stored in
+				the Sqoop metastore. When executing a saved job, you will need to
+				reenter the database password. Uncomment this setting to enable saved
+				password storage. (INSECURE!)
+			  -->
+
+			<!-- ******************************************************** 
+				*
+				*           只启用该属性即可，在sqoop的元数据库中存储密码，
+				*			不需要手动输入
+				*
+				*********************************************************
+			-->
+			  <property>
+				<name>sqoop.metastore.client.record.password</name>
+				<value>true</value>
+				<description>If true, allow saved passwords in the metastore.
+				</description>
+			  </property>
+			  <!--
+			  <property>
+				<name>sqoop.metastore.server.location</name>
+				<value>/tmp/sqoop-metastore/shared.db</value>
+				<description>Path to the shared metastore database files.
+				If this is not set, it will be placed in ~/.sqoop/.
+				</description>
+			  </property>
+
+			  <property>
+				<name>sqoop.metastore.server.port</name>
+				<value>16000</value>
+				<description>Port that this metastore should listen on.
+				</description>
+			  </property>
+			  -->
+
+			</configuration>
+
+		2.job管理
+			sqoop-job --create
+			sqoop-job --delete
+			sqoop-job --list
+			sqoop-job --show 
+
+			sqoop job --create hbasejob -- import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://192.168.231.1:3306/big9 --username root --password root --table customers --hbase-table ns1:customers --column-family f1 --hbase-row-key id

@@ -1,0 +1,103 @@
+redis
+-------------
+	NoSQL
+	内存数据库。
+	高性能 : 读-110000/s  写:81000/s
+	String --> byte[]
+	复杂类型:
+	hash			//map(k,v)
+	list			//放倒的stack，push | pop
+	set				//无序，不重复
+	sorted_set		//有序(score)，不重复。
+	缓存			//常用数据放到redis形成缓存。
+	默认有16个		//select 0
+					//配置文件可修改。
+	cluster			//cluster-trib.rb ...
+
+ganglia
+-------------
+	对集群资源进行监控的。
+	1.gmond
+		守护进程，收集本地主机的资源使用信息。
+
+	2.gmetad
+		汇总各个gmond的数据，供gweb使用。
+
+	3.gweb
+		php开发的web程序，可视化部分。
+	
+安装gmond所需软件包
+------------------
+	1.规划集群
+		s101
+		s102
+		s103
+		s104
+
+	2.安装ganglia yum库
+		sudo yum install epel-release
+		yum install -y ganglia-gmetad ganglia-devel ganglia-gmond
+
+	3.启动ganglia-gmond守护进程
+		sudo service gmond start
+
+	4.查看进程
+		sudo service gmond status
+		
+
+在监控节点启动gmetad进程
+-----------------------
+	1.选择主机s101
+
+	2.启动gmetad
+		su root
+		service gmetad start
+		service gmetad status
+	
+在101节点安装gweb程序
+------------------------
+	1.安装依赖包
+		su root
+		yum install -y httpd php
+
+	2.安装ganglia-web
+		
+		2.1)之前装了就卸载
+			yum remove ganglia-web
+
+		2.2)tar ganglia-web-3.7.2.tar.gz
+			tar -xzvf ganglia-web-3.7.2.tar.gz
+
+		2.3)进入解压目录，修改tar开的Makefile文件
+			[Makefile]
+			...
+			GDESTDIR = /var/www/html
+			APACHE_USER = apache
+
+		2.4)执行make install
+			su root
+			cd ganglia-web-3.7.2
+			make install
+		
+		2.5)验证是否成功
+			cd /var/www/html
+			ls xxx.php
+
+	3.启动httpd服务器
+		su root
+		service httpd start
+
+	4.执行setenforce命令
+		su root
+		setenforce 0
+	
+	5.通过浏览器访问
+		http://s101
+
+其他监控软件
+--------------
+	ganglia			//能够看到整个集群的负载
+	zabbix			//单个节点的使用。
+	cacti
+
+

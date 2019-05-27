@@ -1,0 +1,772 @@
+flume
+--------------
+	分布式收集日志工具.
+	agent:
+	1.source
+		针对channel来讲，消息生产者，将消息放置到channel中。
+		netcat			//
+		seq				//测试
+		stress			//压测
+		spooldir		//监控目录
+		exec			//tail -F /xxx
+
+	2.channel
+		缓冲区，暂存消息的地方。
+		memory			//速度快，丢数据
+		file			//disk,可靠性
+
+	3.sink
+		消息消费者，从channel提取消息，输出到目的地。
+		logger
+		file_roll
+		hdfs			//
+		hive			//?
+		hbase			//
+
+
+avro高级应用
+-----------------
+	1.hop(跃点式)
+		a)说明
+			配置多个agent，形成一个链条。
+
+		b)配置
+			[hop.conf]
+			#############################
+			###        a1            ####
+			#############################
+			a1.sources=r1
+			a1.sinks=k1
+			a1.channels=c1
+
+			#source
+			a1.sources.r1.type=netcat
+			a1.sources.r1.bind=0.0.0.0
+			a1.sources.r1.port=8888
+
+			#channel
+			a1.channels.c1.type=memory
+			a1.channels.c1.capacity=100000
+			a1.channels.c1.transactionCapacity=10000
+
+			#sinks
+			a1.sinks.k1.type=avro
+			a1.sinks.k1.hostname=127.0.0.1
+			a1.sinks.k1.port=9999
+
+			#binding
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+			#############################
+			###        a2            ####
+			#############################
+			a2.sources=r1
+			a2.sinks=k1
+			a2.channels=c1
+
+			#source
+			a2.sources.r1.type=seq
+			a2.sources.r1.totalEvents=100
+
+			#channel
+			a2.channels.c1.type=memory
+			a2.channels.c1.capacity=100000
+			a2.channels.c1.transactionCapacity=10000
+
+			#sinks
+			a2.sinks.k1.type=avro
+			a2.sinks.k1.hostname=127.0.0.1
+			a2.sinks.k1.port=9999
+
+			#binding
+			a2.sources.r1.channels=c1
+			a2.sinks.k1.channel=c1
+
+			#############################
+			###        a3            ####
+			#############################
+			a3.sources=r1
+			a3.sinks=k1
+			a3.channels=c1
+
+			#source
+			a3.sources.r1.type=avro
+			a3.sources.r1.bind=0.0.0.0
+			a3.sources.r1.port=9999
+
+			#channel
+			a3.channels.c1.type=memory
+			a3.channels.c1.capacity=100000
+			a3.channels.c1.transactionCapacity=10000
+
+			#sinks
+			a3.sinks.k1.type=logger
+
+			#binding
+			a3.sources.r1.channels=c1
+			a3.sinks.k1.channel=c1
+
+		c)启动顺序
+			1)先启动a3
+				$>flume-ng agent -f hop.conf -n a3 -Dflume.root=INFO,console
+
+ 			2)再启动a2
+				$>flume-ng agent -f hop.conf -n a2
+
+			3)最后启动a1
+				$>flume-ng agent -f hop.conf -n a1
+
+			4)启动nc
+				$>nc localhost 8888
+				
+flume内置拦截器
+-----------------
+	1.说明
+		拦截可以修改或删除事件。拦截器通常操纵event对象的header部分。
+
+	2.HostInterceptor
+		2.1)配置
+			[i_host.conf]
+			#############################
+			###        a1            ####
+			#############################
+			a1.sources=r1
+			a1.sinks=k1
+			a1.channels=c1
+
+			#source
+			a1.sources.r1.type=seq
+			a1.sources.r1.totalEvents=10
+			a1.sources.r1.interceptors=i1 i2 i3
+
+			#主机名拦截器
+			a1.sources.r1.interceptors.i1.type=host
+			a1.sources.r1.interceptors.i1.useIP=true
+			a1.sources.r1.interceptors.i1.hostHeader=myhost
+
+			#timestamp拦截器
+			a1.sources.r1.interceptors.i2.type=timestamp
+			a1.sources.r1.interceptors.i2.header=mytime
+
+			#static拦截器
+			a1.sources.r1.interceptors.i3.type=static
+			a1.sources.r1.interceptors.i3.key=bank
+			a1.sources.r1.interceptors.i3.value=jianhang
+
+			#channel
+			a1.channels.c1.type=memory
+			a1.channels.c1.capacity=100000
+			a1.channels.c1.transactionCapacity=10000
+
+			#sinks
+			a1.sinks.k1.type=logger
+
+			#binding
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		2.2)启动
+			$>flume-ng agent -f i_host.conf -n a1 -Dflume.root=INFO,console
+
+avro Source
+--------------------
+	1.说明
+		该source接受的avro格式的数据。通常和avrosink构成跃点。
+		但是也可以单独使用，单独使用时，使用flume-ng avroclient发送avro消息给该source.
+
+	2.配置
+		[i_host.conf]
+		#############################
+		###        a1            ####
+		#############################
+		a1.sources=r1
+		a1.sinks=k1
+		a1.channels=c1
+
+		#source
+		a1.sources.r1.type=avro
+		a1.sources.r1.bind=0.0.0.0
+		a1.sources.r1.port=8888
+
+		#channel
+		a1.channels.c1.type=memory
+		a1.channels.c1.capacity=100000
+		a1.channels.c1.transactionCapacity=10000
+
+		#sinks
+		a1.sinks.k1.type=logger
+
+		#binding
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+	
+	3.启动
+		$>flume-ng agent -f r_avro.conf -n a1 -Dflume.root=INFO,console
+
+	4.通过avro-client命令发送消息
+		$>flume-ng avro-client -H 127.0.0.1 -p 8888 -F /home/centos/logs/log.log 
+
+通道选择器
+-------------------
+	1.说明
+		通道选择器控制event进入到哪个通道的。
+
+	2.通道选择器类型
+		2.1)replicating
+			副本方式，是默认值。
+			每个通道各收到一个事件的副本。
+
+			[s_rep.conf]
+			#############################
+			###        a1            ####
+			#############################
+			a1.sources=r1
+			a1.sinks=k1 k2 k3
+			a1.channels=c1 c2 c3
+
+			#source
+			a1.sources.r1.type=seq
+			a1.sources.r1.totalEvents=10
+			a1.sources.r1.selector.type = replicating
+			a1.sources.r1.selector.optional = c3
+
+			#channel
+			a1.channels.c1.type=memory
+			a1.channels.c2.type=memory
+			a1.channels.c3.type=memory
+
+			#sinks
+			a1.sinks.k1.type=file_roll
+			a1.sinks.k1.sink.directory = /home/centos/logs/log1
+
+			a1.sinks.k2.type=file_roll
+			a1.sinks.k2.sink.directory = /home/centos/logs/log2
+
+			a1.sinks.k3.type=file_roll
+			a1.sinks.k3.sink.directory = /home/centos/logs/log3
+
+			#binding
+			a1.sources.r1.channels=c1 c2 c3
+			a1.sinks.k1.channel=c1
+			a1.sinks.k2.channel=c2
+			a1.sinks.k3.channel=c3
+
+			[准备]
+			常见目录
+			$>mkdir logs/log1 logs/log2 logs/log3
+			
+			[启动]
+			$>flume-ng agent -f s_rep.conf -n a1
+
+		
+		2.2)Multiplexing
+			多路复用方式，按照header中key的值，进行动态路由。
+			#############################
+			###        a1            ####
+			#############################
+			a1.sources=r1
+			a1.sinks=k1 k2 k3
+			a1.channels=c1 c2 c3
+
+			#source
+			a1.sources.r1.type=avro
+			a1.sources.r1.bind=0.0.0.0
+			a1.sources.r1.port=8888
+
+			a1.sources.r1.selector.type = multiplexing
+			a1.sources.r1.selector.header = city
+			a1.sources.r1.selector.mapping.BJ = c1
+			a1.sources.r1.selector.mapping.HB = c1 c2
+			a1.sources.r1.selector.default = c3
+
+			#channel
+			a1.channels.c1.type=memory
+			a1.channels.c2.type=memory
+			a1.channels.c3.type=memory
+
+			#sinks
+			a1.sinks.k1.type=file_roll
+			a1.sinks.k1.sink.directory = /home/centos/logs/log1
+
+			a1.sinks.k2.type=file_roll
+			a1.sinks.k2.sink.directory = /home/centos/logs/log2
+
+			a1.sinks.k3.type=file_roll
+			a1.sinks.k3.sink.directory = /home/centos/logs/log3
+
+			#binding
+			a1.sources.r1.channels=c1 c2 c3
+			a1.sinks.k1.channel=c1
+			a1.sinks.k2.channel=c2
+			a1.sinks.k3.channel=c3
+
+			[启动]
+			flume-ng agent -f s_mul.conf -n a1
+
+			[启动client]
+			echo city=BJ > ~/header1.txt
+			echo city=HB > ~/header2.txt
+			echo city=GD > ~/header3.txt
+
+			#-H:主机名 -F:发送文件名 -R:头文件
+			flume-ng avro-client -H 127.0.0.1 -p 8888 -F /home/centos/log.log -R ~/header1.txt
+			flume-ng avro-client -H 127.0.0.1 -p 8888 -F /home/centos/log.log -R ~/header2.txt
+			flume-ng avro-client -H 127.0.0.1 -p 8888 -F /home/centos/log.log -R ~/header3.txt
+
+
+SinkProcessor
+----------------------
+	sink处理器对event进行划分，在group寻找相应的sink进行处理。
+	processor有三种策略，default、load_balance、failover
+
+	1.default
+		并没有group，只有一个sink。
+
+	2.failover
+		改机制维护了sink的优先级列表，保证事件只要可用，就会被处理。
+		[配置]
+		[p_failover.conf]
+		a1.sources=r1
+		a1.sinks=k1 k2 k3
+		a1.channels=c1
+		a1.sinkgroups = g1
+
+		#source
+		a1.sources.r1.type=netcat
+		a1.sources.r1.bind=0.0.0.0
+		a1.sources.r1.port=8888
+
+		#channel
+		a1.channels.c1.type=memory
+
+		#sinks
+		a1.sinks.k1.type=file_roll
+		a1.sinks.k1.sink.directory = /home/centos/logs/log1
+
+		a1.sinks.k2.type=file_roll
+		a1.sinks.k2.sink.directory = /home/centos/logs/log2
+
+		a1.sinks.k3.type=file_roll
+		a1.sinks.k3.sink.directory = /home/centos/logs/log3
+
+		#group 
+		a1.sinkgroups.g1.sinks = k1 k2 k3
+		a1.sinkgroups.g1.processor.type = failover
+		a1.sinkgroups.g1.processor.priority.k1 = 5
+		a1.sinkgroups.g1.processor.priority.k2 = 10
+		a1.sinkgroups.g1.processor.priority.k3 = 20
+		a1.sinkgroups.g1.processor.maxpenalty = 10000
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+		a1.sinks.k2.channel=c1
+		a1.sinks.k3.channel=c1
+
+	3.load_balance
+		负载均衡，实现机制有round_robbin(默认)和random选择策略。
+
+		[p_lb.conf]
+		a1.sources=r1
+		a1.sinks=k1 k2 k3
+		a1.channels=c1
+		a1.sinkgroups = g1
+
+		#source
+		a1.sources.r1.type=netcat
+		a1.sources.r1.bind=0.0.0.0
+		a1.sources.r1.port=8888
+
+		#channel
+		a1.channels.c1.type=memory
+		a1.channels.c1.transactionCapacity=1
+
+		#sinks
+		a1.sinks.k1.type=file_roll
+		a1.sinks.k1.sink.directory = /home/centos/logs/log1
+
+		a1.sinks.k2.type=file_roll
+		a1.sinks.k2.sink.directory = /home/centos/logs/log2
+
+		a1.sinks.k3.type=file_roll
+		a1.sinks.k3.sink.directory = /home/centos/logs/log3
+
+		#group 
+		a1.sinkgroups.g1.sinks = k1 k2 k3
+		a1.sinkgroups.g1.processor.type = load_balance
+		a1.sinkgroups.g1.processor.backoff = true
+		a1.sinkgroups.g1.processor.selector = round_robin
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+		a1.sinks.k2.channel=c1
+		a1.sinks.k3.channel=c1
+
+
+自定义拦截器
+--------------------
+	1.实现拦截器类
+		package com.it18zhang.flume.interceptor;
+
+		import org.apache.flume.Context;
+		import org.apache.flume.Event;
+		import org.apache.flume.interceptor.Interceptor;
+
+		import java.util.List;
+		import java.util.Map;
+
+
+		/**
+		 * 限速拦截器
+		 */
+		public class SpeedInterceptor implements Interceptor {
+
+			//速率:字节数/秒
+			private int speed ;
+
+			//上次时间
+			private long lastTime = -1 ;
+
+			//上次body的大小
+			private int lastBodySize = 0;
+			/**
+			 */
+			private SpeedInterceptor(int speed) {
+				this.speed = speed;
+			}
+
+			public void initialize() {
+			}
+
+			/**
+			 */
+			public Event intercept(Event event) {
+				Map<String, String> headers = event.getHeaders();
+				int currentBodySize = event.getBody().length;
+				long currentTime = System.currentTimeMillis() ;
+				//第一次
+				if(lastTime == -1){
+					this.lastTime = currentTime ;
+					this.lastBodySize = currentBodySize ;
+				}
+				//第二次之后
+				else{
+					//1.计算按照指定速率，应该耗时多久
+					long shouldMs = (long)((double)lastBodySize / speed * 1000) ;
+					//2.计算从上次发送的事件到目前经过了多长时间
+					long elast = currentTime - lastTime ;
+
+					if(elast < shouldMs){
+						try {
+							//休眠
+							Thread.sleep(shouldMs - elast);
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+					}
+					this.lastTime = System.currentTimeMillis();
+					this.lastBodySize = currentBodySize;
+				}
+				return event;
+			}
+
+			/**
+			 */
+			public List<Event> intercept(List<Event> events) {
+				for (Event event : events) {
+					intercept(event);
+				}
+				return events;
+			}
+
+			public void close() {
+			}
+
+			/**
+			 * Builder which builds new instances of the TimestampInterceptor.
+			 */
+			public static class Builder implements Interceptor.Builder {
+
+				private int speed ;
+				private final int SPEED_DEFAULT = 1024;
+
+
+				public Interceptor build() {
+					return new SpeedInterceptor(speed);
+				}
+
+				public void configure(Context context) {
+					//提取配置文件中的速率设置
+					speed = context.getInteger(Constants.SPEED, SPEED_DEFAULT);
+				}
+			}
+
+			public static class Constants {
+				public static String SPEED = "speed";
+			}
+
+		}
+	
+	2.导出jar包到/soft/flume/lib下
+
+	3.配置文件
+		[speed.conf]
+		a1.sources=r1
+		a1.sinks=k1
+		a1.channels=c1
+
+		#source
+		a1.sources.r1.type=seq
+		a1.sources.r1.interceptors=i1
+		a1.sources.r1.interceptors.i1.type=com.it18zhang.flume.interceptor.SpeedInterceptor$Builder
+		a1.sources.r1.interceptors.i1.speed=5
+
+		a1.sources.r1.totalEvents=1000
+
+		#channel
+		a1.channels.c1.type=memory
+
+		#sinks
+		a1.sinks.k1.type=logger
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+	
+	4.启动
+		$>flume-ng agent -f speed.conf -n a1 -Dflume.root=INFO,console
+
+
+	5.练习
+		限制10秒一个字节.
+		
+
+实现运行时动态修改速率
+------------------------
+	1.原理
+		引进zk集群，将speed配置到zk中，拦截器中注册watcher，监控speed属性，
+		一旦属性被修改，回调修改内存中的速率值。
+
+	2.引入依赖
+        <dependency>
+            <groupId>org.apache.zookeeper</groupId>
+            <artifactId>zookeeper</artifactId>
+            <version>3.4.9</version>
+        </dependency>
+
+	3.编程
+		package com.it18zhang.flume.interceptor;
+
+		import org.apache.flume.Context;
+		import org.apache.flume.Event;
+		import org.apache.flume.interceptor.Interceptor;
+		import org.apache.zookeeper.*;
+		import org.apache.zookeeper.data.Stat;
+
+		import java.util.List;
+		import java.util.Map;
+
+
+		/**
+		 * 限速拦截器
+		 */
+		public class SpeedInterceptor implements Interceptor {
+			private ZooKeeper zk ;
+
+			//速率:字节数/秒
+			private float speed ;
+
+			//上次时间
+			private long lastTime = -1 ;
+
+			//上次body的大小
+			private int lastBodySize = 0;
+
+			private String zkConn ;
+			/**
+			 */
+			private SpeedInterceptor(float speed,String zkConn) {
+				this.speed = speed;
+				this.zkConn = zkConn ;
+			}
+
+			/**
+			 *初始化方法
+			 */
+			public void initialize() {
+				try {
+					//1.连接到zk，注册速率
+					zk = new ZooKeeper(zkConn,10000 ,null ) ;
+					if(zk.exists("/flume",null) == null){
+						zk.create("/flume",null, ZooDefs.Ids.OPEN_ACL_UNSAFE , CreateMode.PERSISTENT) ;
+					}
+
+
+					//没有/flume/speed节点，创建新节点
+					zk.create("/flume/speed", (speed+"").getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
+					System.out.println("/flume/speed节点创建成功!");
+
+					//zk观察者，递归观察
+					Watcher w = new Watcher() {
+						public void process(WatchedEvent event) {
+							System.out.println("有事件发生!" + event);
+							try {
+								byte[] data = zk.getData("/flume/speed", this, null);
+								String speedStr = new String(data) ;
+								speed = Float.parseFloat(speedStr) ;
+								System.out.println("速率变了," + speed );
+							} catch (Exception e) {
+								e.printStackTrace();
+							}
+						}
+					} ;
+					zk.getData("/flume/speed" , w ,null) ;
+
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+
+			/**
+			 */
+			public Event intercept(Event event) {
+				Map<String, String> headers = event.getHeaders();
+				int currentBodySize = event.getBody().length;
+				System.out.println("currentBodySize : " + currentBodySize);
+				long currentTime = System.currentTimeMillis() ;
+				//第一次
+				if(lastTime == -1){
+					this.lastTime = currentTime ;
+					this.lastBodySize = currentBodySize ;
+
+				}
+				//第二次之后
+				else{
+					//1.计算按照指定速率，应该耗时多久
+					long shouldMs = (long)((double)lastBodySize / speed * 1000) ;
+					//2.计算从上次发送的事件到目前经过了多长时间
+					long elapse = currentTime - lastTime ;
+
+					if(elapse < shouldMs){
+						try {
+							//休眠
+							Thread.sleep(shouldMs - elapse);
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+					}
+					this.lastTime = System.currentTimeMillis();
+					this.lastBodySize = currentBodySize;
+				}
+				return event;
+			}
+
+			/**
+			 */
+			public List<Event> intercept(List<Event> events) {
+				for (Event event : events) {
+					intercept(event);
+				}
+				return events;
+			}
+
+			public void close() {
+				try {
+					zk.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+
+			/**
+			 * Builder which builds new instances of the TimestampInterceptor.
+			 */
+			public static class Builder implements Interceptor.Builder {
+
+				private float speed ;
+				private final float SPEED_DEFAULT = 1024f;
+				private String zkConn  ;
+
+
+				public Interceptor build() {
+					return new SpeedInterceptor(speed,zkConn);
+				}
+
+				public void configure(Context context) {
+					//提取配置文件中的速率设置
+					String speedStr = context.getString(Constants.SPEED, "1024f");
+					this.zkConn = context.getString(Constants.ZK_CONN, "");
+					this.speed = Float.parseFloat(speedStr) ;
+					System.out.println("speed : " + speed);
+				}
+			}
+
+			public static class Constants {
+				public static String SPEED = "speed";
+				public static String ZK_CONN = "zk.connect";
+			}
+
+		}
+	4.导出jar包
+
+	5.配置文件
+		a1.sources=r1
+		a1.sinks=k1
+		a1.channels=c1
+
+		#source
+		a1.sources.r1.type=seq
+		a1.sources.r1.interceptors=i1
+		a1.sources.r1.interceptors.i1.type=com.it18zhang.flume.interceptor.SpeedInterceptor$Builder
+		a1.sources.r1.interceptors.i1.speed=5
+		a1.sources.r1.interceptors.i1.zk.connect=s102:2181,s103:2181,s104:2181
+
+		a1.sources.r1.maxTotalEvents=1000
+
+		#channel
+		a1.channels.c1.type=memory
+
+		#sinks
+		a1.sinks.k1.type=logger
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+		
+	5.启动zk集群
+
+
+flume
+-------------
+	1.source
+		spooldir
+		exec
+		batchSize
+		自定义源。
+
+		
+	2.channel
+		memory
+		file
+
+	3.Sink
+		hdfs			//round roll
+		hbase
+		kafka
+
+	4.interceptor
+		*****
+	
+	5.hop
+		avro Source + avro sink
+	
+	6.channelSelector
+		replicating
+		mulplexing		//header
+	
+	7.SinkProcessor
+		type			//default|failover|load_balance
+						//round_robin | random
+

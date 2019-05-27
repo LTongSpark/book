@@ -1,0 +1,222 @@
+hbase数据迁移
+--------------
+	bulkload
+	hadoop jar hbase-server-1.2.6.jar completebulkload ...
+
+hbase参与MR
+-------------
+	TableInputFormat			//scan
+	TableOuputFormat			//put
+
+Phoenix
+-------------
+	hbase上的hive，
+	sql方式操纵hbase，
+	内置很多coprocessor，辅助完成二级索引，事务。
+	client通过jdbc协议交互hbase。
+	Get/Put
+
+	--必须创建主键，主键是rowkey。
+	create table mydb.t1(id string not null primary key ,name string ,age integer) ;
+
+	--创建索引，索引本质上是表,表索引的值+rowkey做rowkey.
+	create index idx_mydb_t1_name on mydb.t1(name) ;
+
+	--client端命令行工具
+	$>sqlline.py s102
+
+
+hbase
+----------------
+	bigtable
+
+
+URL
+-----------------
+	统一资源定位符。
+	统一资源定位子。
+	统一资源定位器。
+	unified resource locator.
+
+	协议   domainname   :端口  path       ?queryStr  #segment
+	http://www.baidu.com:80/a/b/c/d/e.html?id=1&nam=2#xxx
+
+	http://www.baidu.com/index.html
+
+HTML
+----------------
+	hyper text markup language,
+	JEE : java enterprise edition.
+
+
+http
+-----------------
+	hypertext transfer protocal.
+
+
+廋客户端
+------------------
+	b/s,brower / web server.
+	brower接受html代码，渲染。
+
+爬虫
+--------------
+	URL
+	
+
+phoenix
+----------------
+	--创建
+	create table mydb.t2(hashcode varchar not null primary key , html varchar , keywords varchar) ;
+
+	--创建索引
+	create index idx_keywords on mydb.t2(keywords) ;
+
+
+爬虫代码实现下载
+--------------------
+	package com.it18zhang.hbase.spider;
+
+	import java.io.ByteArrayOutputStream;
+	import java.io.FileOutputStream;
+	import java.io.InputStream;
+	import java.net.HttpURLConnection;
+	import java.net.MalformedURLException;
+	import java.net.URL;
+	import java.sql.Connection;
+	import java.sql.DriverManager;
+	import java.sql.PreparedStatement;
+
+	/**
+	 *
+	 */
+	public class App {
+		public static void main(String[] args) throws Exception {
+
+
+			String strUrl = "https://www.baidu.com" ;
+			URL url = new URL(strUrl) ;
+			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+			int resCode = conn.getResponseCode();
+			String type = conn.getContentType() ;
+			long length = conn.getContentLength() ;
+			System.out.println(resCode + "/" + type + "/" + length);
+
+			InputStream in = conn.getInputStream();
+			ByteArrayOutputStream baos = new ByteArrayOutputStream() ;
+			byte[] buf = new byte[1024] ;
+			int len = -1 ;
+			while((len  = in.read(buf)) !=-1){
+				baos.write(buf,0,len);
+			}
+			baos.close();
+			in.close();
+
+			//解析网页
+			String html = new String(baos.toByteArray()) ;
+
+
+			/***
+			 * 入库部分
+			 */
+			String driver = "org.apache.phoenix.jdbc.PhoenixDriver";
+			Class.forName(driver);
+			Connection dbconn = DriverManager.getConnection("jdbc:phoenix:s102:2181");
+			dbconn.setAutoCommit(false);
+			String sql = "upsert into mydb.t2 values(?,?,?)";
+
+			//创建
+			PreparedStatement ppst = dbconn.prepareStatement(sql);
+
+			//绑定参数
+			ppst.setString(1 , strUrl);
+			ppst.setString(2 , html);
+			ppst.setString(3, "baidu,search");
+			//执行
+			ppst.executeUpdate() ;
+			//
+			dbconn.commit();
+			dbconn.close();
+			System.out.println("over");
+
+		}
+	}
+
+
+
+正则表达式
+-------------------
+	1.字符类 
+		[abc]				//a、b 或 c（简单类） 
+		[^abc]				//任何字符，除了 a、b 或 c（否定） 
+		[a-zA-Z]			//a 到 z 或 A 到 Z，两头的字母包括在内（范围） 
+		[a-d[m-p]]			//a 到 d 或 m 到 p：[a-dm-p]（并集） 
+		[a-z&&[def]]		//d、e 或 f（交集） 
+		[a-z&&[^bc]]		//a 到 z，除了 b 和 c：[ad-z]（减去） 
+		[a-z&&[^m-p]]		//a 到 z，而非 m 到 p：[a-lq-z]（减去） 
+	
+	2.预定义字符类
+		.					//任何字符（与行结束符可能匹配也可能不匹配） 
+		\d					//数字：[0-9] 
+		\D					//非数字： [^0-9] 
+		\s					//空白字符：[ \t\n\x0B\f\r] 
+		\S					//非空白字符：[^\s] 
+		\w					//单词字符：[a-zA-Z_0-9] 
+		\W					//非单词字符：[^\w] 
+
+	3.边界匹配器 
+		^					//行的开头 
+		$					//行的结尾 
+		\b					//单词边界 
+		\B					//非单词边界 
+		\A					//输入的开头 
+		\G					//上一个匹配的结尾 
+		\Z					//输入的结尾，仅用于最后的结束符（如果有的话） 
+		\z					//输入的结尾 
+	4.Greedy 数量词 
+		X?					//X，一次或一次也没有 
+		X*					//X，零次或多次 
+		X+					//X，一次或多次 
+		X{n}				//X，恰好 n 次 
+		X{n,}				//X，至少 n 次 
+		X{n,m}				//X，至少 n 次，但是不超过 m 次 
+		  
+	5.Reluctant 数量词 
+		X??					//X，一次或一次也没有 
+		X*?					//X，零次或多次 
+		X+?					//X，一次或多次 
+		X{n}?				//X，恰好 n 次 
+		X{n,}?				//X，至少 n 次 
+		X{n,m}?				//X，至少 n 次，但是不超过 m 次 
+
+	6.ogical 运算符 
+		XY					//X 后跟 Y 
+		X|Y					//X 或 Y 
+	    (X)					//X，作为捕获组 
+
+
+
+
+Pattern p = Pattern.compile("<a\\s+href=\"([\u0000-\uffff&&[^\u005c\u0022]]*)\"");
+Matcher m = p.matcher(str);
+while(m.find()){
+	String s = m.group();
+	System.out.println(s);
+}
+
+
+体育 频道
+select url from mydb.t2 where keywords like '%论坛%' or keywords like '%体育%' ;
+
+select url from mydb.t2 where keywords like '%论坛%' ;
+
+select url from mydb.t2 where keywords like '%体育%' ;
+
+
+select t1.url from (select url from mydb.t2 where keywords like '%体育%') t1 ,(select url from mydb.t2 where keywords like '%论坛%') t2 where t1.url = t2.url ;
+
+select t1.url from (select url from mydb.t2 where keywords like '%体育%') t1 ,(select url from mydb.t2 where keywords like '%论坛%') t2 where t1.url = t2.url ;
+
+select url from mydb.t2 where keywords like '%体育%' and exists (select url from mydb.t2 where keywords like '%论坛%') ;
+
+select url from t1 where kw like '%tiyu%' and url  (select url from t1 where kw like '%luntan%') ;

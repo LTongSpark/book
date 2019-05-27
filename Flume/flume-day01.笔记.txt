@@ -1,0 +1,644 @@
+failover
+--------------
+	容灾。
+
+fault tolerant
+--------------
+	容错。
+
+flume
+--------------
+	收集日志软件。
+	分布式、具有可靠性、可用性服务，用于高效收集、聚合、移动大量的日志数据.
+	有着简单灵活基于流计算技术的架构。
+
+
+flume架构
+--------------
+	一个flume就是一个agent.
+	1.source
+		数据来源 , 分别对不同的数据来源进行收集。
+		对与channel来说，source是生产者。
+		
+	2.channel
+		类似于缓冲区，source收集的数据进入到channel。
+
+	3.sink
+		从channel中提取数据，发送出去。对于channel来说，是消费者。
+
+	4.注意
+		每个source都可以向多个通道写数据。
+		每个sink只能从一个channel中提取数据.
+
+安装flume
+---------------
+	1.下载apache-flume-1.7.0.tar.gz
+	2.tar开
+	3.软连接
+	4.环境变量
+		[/etc/profile]
+		export FLUME_HOME=/soft/flume
+		export PATH=$PATH:$FLUME_HOME/bin
+	5.source
+	6.验证
+		$>cd /soft/flume
+		$>flume-ng version
+	
+体验
+---------------
+	1.Source
+		NetcatSource使用nc启动serverSocket，监听指定端口。
+	2.Channel
+		内存通道。
+	3.Sink
+		Logger，配置日志直接打印在console上。
+	
+	4.demo.conf
+		[flume/conf/demo.conf]
+		a1.sources = r1
+		a1.channels = c1
+		a1.sinks = k1
+
+		#define source
+		a1.sources.r1.type = netcat
+		a1.sources.r1.bind = 0.0.0.0
+		a1.sources.r1.port = 8888
+
+		# define channel
+		a1.channels.c1.type = memory
+		a1.channels.c1.capacity = 100
+
+		# define sink
+		a1.sinks.k1.type = logger
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+
+	5.启动flume
+		$>flume-ng help		//看帮助
+		$>cd flume/conf
+		$>flume-ng agent -f demo.conf -n a1 -Dflume.root=INFO,console
+
+flume常用的source
+--------------------
+	1.netcat
+
+	2.sequence
+		a)配置文件
+			用于测试.
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = seq
+			#事件总数。
+			a1.sources.r1.totalEvents = 1000
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+		
+		b)启动
+			flume-ng agent -f r_seq.conf -n a1 -Dflume.root=INFO,console
+	
+	3.压力源
+		用于压力测试,每个事件可以设置size。
+		a)配置文件
+			用于测试.
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = org.apache.flume.source.StressSource
+			a1.sources.r1.size = 10240
+			a1.sources.r1.maxTotalEvents = 1000
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+		
+		b)启动
+			flume-ng agent -f r_seq.conf -n a1 -Dflume.root=INFO,console
+	
+	4.监控目录的源
+		针对指定的目录进行监控，一旦新文件进入，就进行数据提取，数据提取完成的文件
+		重命名到.completed文件。
+		因此，要求文件必须在目录外创建，通过mv或拷贝的方式放置到指定目录中。
+		若对目录内的文件进行append工作，无法收集到新的日志。
+
+		a)配置文件
+			用于测试.
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = spooldir
+			a1.sources.r1.spoolDir = /home/centos/logs
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+		
+		b)启动
+			flume-ng agent -f r_seq.conf -n a1 -Dflume.root=INFO,console
+	
+	5.exec源
+		实时收集数据。
+
+		a)配置文件
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = exec
+			a1.sources.r1.command = tail -F /home/centos/logs/log.log
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+		
+		b)启动
+			flume-ng agent -f r_exec.conf -n a1 -Dflume.root=INFO,console
+
+		c)启动新的终端，执行循环追加命令
+			$>for x in 1 2 3 4 5 6 7 8 9 10 ;do sleep 1 ; echo tom$x >> ~/logs/log.log ; done
+			$>for ((x=1;x<100;x=$x+1)) ;do sleep 1 ; echo $x ; echo tom$x >> ~/logs/log.log ; done
+
+常用sink
+----------------
+	1.Logger
+		#配置sink类型
+		...
+		a1.sinks.k1.type = logger
+
+		#启动时，指定日志级别和输出地址。
+		flume-ng agent -f r_exec.conf -n a1 -Dflume.root=INFO,console
+
+	2.File Roll Sink
+		a)说明
+			该sink从channel提取数据event，写入本地文件中。
+
+		b)配置
+			[k_fileroll.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = seq
+			a1.sources.r1.totalEvents = 1000
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = file_roll
+			#控制滚动间隔(秒)
+			a1.sinks.k1.sink.rollInterval = 1
+
+			#目录必须先创建
+			a1.sinks.k1.sink.directory = /home/centos/logs
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+		c)运行
+			flume-ng agent -f k_fillroll.conf -n a1
+	
+	3.hdfs sink
+		a)说明
+			写入event到hdfs，目前支持text和序列文件。
+			
+		b)配置
+			[k_hdfs.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = seq
+			a1.sources.r1.totalEvents = 100000000
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = hdfs
+			#控制hdfs上的目录
+			a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
+			#文件前缀
+			a1.sinks.k1.hdfs.filePrefix = events-
+			#round控制的是目录的滚动
+			a1.sinks.k1.hdfs.round = true
+			a1.sinks.k1.hdfs.roundValue = 5
+			a1.sinks.k1.hdfs.roundUnit = second
+
+			#文件滚动
+			a1.sinks.k1.hdfs.rollInterval = 1
+			a1.sinks.k1.hdfs.rollSize = 1024
+			a1.sinks.k1.hdfs.rollCount = 100
+
+			#设置使用本地时间戳，否则需要单独在event header设置时间戳。
+			a1.sinks.k1.hdfs.useLocalTimeStamp = true
+
+			#允许hdfs操纵的时间，比如open、flush、write、close，
+			#如果在是定时间段内还没有完成，抛异常。
+			a1.sinks.k1.hdfs.callTimeout=10000
+
+			#控制文件类型SequenceFile, DataStream-文本文件 CompressedStream-压缩流文件
+			a1.sinks.k1.hdfs.fileType = DataStream 
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)启动
+			flume-ng agent -f k_hdfs.conf -n a1
+			
+	4.hive sink
+		a)说明
+			写入数据到hive数仓，可以写入hive的table或者分区中。使用到hive事务，通常
+			性能较差。一旦数据commit，就立即为查询可见。
+		b)配置
+			[k_hive.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = netcat
+			a1.sources.r1.bind = 0.0.0.0
+			a1.sources.r1.port= 8888
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			# define sink
+			a1.sinks.k1.type = hive
+			a1.sinks.k1.hive.metastore = thrift://127.0.0.1:9083
+			a1.sinks.k1.hive.database = mydb
+			a1.sinks.k1.hive.table = weblogs
+			a1.sinks.k1.hive.partition = %y-%m-%d,%H-%M-%S
+			a1.sinks.k1.useLocalTimeStamp = true
+			a1.sinks.k1.round = true
+			a1.sinks.k1.roundValue = 5
+			a1.sinks.k1.roundUnit = second
+			a1.sinks.k1.serializer = DELIMITED
+			a1.sinks.k1.serializer.delimiter = ","
+			a1.sinks.k1.serializer.serdeSeparator = ','
+			a1.sinks.k1.serializer.fieldnames =id,msg
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)启动hive元数据服务,通过该服务，能访问hive的元数据(mysql中的表信息)
+			#启动metastore服务
+			$>hive --service metastore &
+
+			#验证9083端口
+			$>netstat -anop |grep 9083
+
+		d)准备hive表
+			SET hive.support.concurrency = true;
+			SET hive.enforce.bucketing = true;
+			SET hive.exec.dynamic.partition.mode = nonstrict;
+			SET hive.txn.manager = org.apache.hadoop.hive.ql.lockmgr.DbTxnManager;
+			SET hive.compactor.initiator.on = true;
+			SET hive.compactor.worker.threads = 1;
+
+			create table weblogs ( id int , msg string )
+			partitioned by (ymd string, hms string)
+			clustered by (id) into 5 buckets
+			stored as orc TBLPROPERTIES('transactional'='true');
+
+		e)从maven下载hive-hcatalog-streaming依赖
+			<dependency>
+				<groupId>org.apache.hive.hcatalog</groupId>
+				<artifactId>hive-hcatalog-streaming</artifactId>
+				<version>2.1.0</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.hive.hcatalog</groupId>
+				<artifactId>hive-hcatalog-core</artifactId>
+				<version>2.1.0</version>
+			</dependency>
+
+		f)从本地maven仓库复制jar到hive/lib下
+			C:\Users\Administrator\.m2\repository\org\apache\hive\hcatalog\hive-hcatalog-streaming\2.1.0\hive-hcatalog-streaming-2.1.0.jar
+			C:\Users\Administrator\.m2\repository\org\apache\hive\hcatalog\hive-hcatalog-core\2.1.0\hive-hcatalog-core-2.1.0.jar
+
+		e)启动flume
+			$>flume-ng agent -f k_hive.conf -n a1
+
+		f)
+
+	5.hbase sink(同步sink)
+		a)介绍
+			该sink写入数据到hbase。
+
+		b)配置
+			[k_hbase.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = netcat
+			a1.sources.r1.bind = 0.0.0.0
+			a1.sources.r1.port= 8888
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			#sink
+			a1.sinks = k1
+			a1.sinks.k1.type = hbase
+			a1.sinks.k1.table = ns1:t10
+			a1.sinks.k1.columnFamily = f1
+			a1.sinks.k1.serializer = org.apache.flume.sink.hbase.RegexHbaseEventSerializer
+			#指定列名称
+			a1.sinks.k1.serializer.colNames = ROW_KEY,id,msg
+			#正则表达式
+			a1.sinks.k1.serializer.regex = (.*),(.*),(.*)
+			#指定字段的索引作为rowkey
+			a1.sinks.k1.serializer.rowKeyIndex = 0
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)启动hbase集群
+			start-hbase.sh
+		
+		d)进入hbase shell创建表
+			$>hbase shell
+			$hbase>create 'ns1:t10' , 'f1'
+
+		e)启动flume
+			$>flume-ng agent -f k_hbase.conf -n a1
+
+		f)启动nc
+			$>nc localhost 8888
+			$nc>hello
+
+		8)查看hbase表
+			$hbase>scan 'ns1:t10'
+
+	6.hbase sink(异步sink)响应的时间不同 ，可以同时进行写入
+		a)介绍
+			该sink写入数据到hbase。异步写入。
+			类型需要是asynchbase,串行化器需要使用SimpleAsyncHbaseEventSerializer.
+
+		b)配置
+			[k_hbase.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = netcat
+			a1.sources.r1.bind = 0.0.0.0
+			a1.sources.r1.port= 8888
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 100
+
+			#sink
+			a1.sinks = k1
+			a1.sinks.k1.type = asynchbase
+			a1.sinks.k1.table = ns1:t10
+			a1.sinks.k1.columnFamily = f1
+			a1.sinks.k1.serializer = org.apache.flume.sink.hbase.SimpleAsyncHbaseEventSerializer
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)启动hbase集群
+			start-hbase.sh
+		
+		d)进入hbase shell创建表
+			$>hbase shell
+			$hbase>create 'ns1:t10' , 'f1'
+
+		e)启动flume
+			$>flume-ng -agent -f k_hbase.conf -n a1
+
+		f)启动nc
+			$>nc localhost 888
+			$nc>hello
+
+		8)查看hbase表
+			$hbase>scan 'ns1:t10'
+
+常用channel
+---------------
+	1.Memory
+		a)说明
+			数据写入内存的对列中，可配置max，但是有丢失数据的风险。
+			capacity			: 是队列中存放的事件最大值。
+			transactionCapacity : source或sink在一次事务中操纵事件个数的最大值。
+			
+		b)配置
+			[c_memory.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = seq
+			a1.sources.r1.totalEvents = 10000000
+
+			# define channel
+			a1.channels.c1.type = memory
+			a1.channels.c1.capacity = 10000
+			a1.channels.c1.transactionCapacity = 10
+
+			#sink
+			a1.sinks = k1
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)启动
+			$>flume-ng agent -f c_memory.conf -n a1 -Dflume.root=INFO,console
+	2.file channel
+		a)介绍
+			该通道将数据写入磁盘，能够保证不丢失数据。
+
+		b)配置
+			[c_file.conf]
+			a1.sources = r1
+			a1.channels = c1
+			a1.sinks = k1
+
+			#define source
+			a1.sources.r1.type = netcat
+			a1.sources.r1.bind = 0.0.0.0
+			a1.sources.r1.port = 8888
+
+			# define channel
+			a1.channels.c1.type = file
+			a1.channels.c1.checkpointDir = /home/centos/flume/chk
+			a1.channels.c1.dataDirs = /home/centos/flume/data
+			#a1.channels.c1.capacity = 500000
+			#a1.channels.c1.transactionCapacity = 5
+
+			#sink
+			a1.sinks.k1.type = logger
+
+			#bind
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		c)创建项目目录
+			mkdir -p ~/flume/data ~/flume/data
+			
+		d)启动flume
+			$>flume-ng agent -f c_file.conf -n a1 -Dflume.root=INFO,console
+
+		e)发送多条消息给nc
+			$>for ((x=1;x<10000000;x=$x+1)) ; do echo tom$x ; echo tom$x | nc localhost 8888 ; done
+		
+
+
+flume源码
+-----------------
+	1.创建模块引入maven
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-flume</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.flume</groupId>
+					<artifactId>flume-ng-core</artifactId>
+					<version>1.7.0</version>
+				</dependency>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+				<dependency>
+					<groupId>org.apache.flume.flume-ng-sinks</groupId>
+					<artifactId>flume-hdfs-sink</artifactId>
+					<version>1.7.0</version>
+				</dependency>
+			</dependencies>
+		</project>
+
+自定义sink
+--------------------
+	1.编写MySink.java
+		package com.it18zhang.flume.sink;
+
+		import org.apache.flume.*;
+		import org.apache.flume.sink.AbstractSink;
+
+		/**
+		 * 自定义sink
+		 */
+		public class MySink extends AbstractSink {
+			public Status process() throws EventDeliveryException {
+				Channel ch = this.getChannel();
+				Transaction tx = ch.getTransaction();
+				tx.begin();
+				Event evt = ch.take();
+				if(evt == null){
+					return Status.BACKOFF ;
+				}
+				else{
+					byte[] data = evt.getBody();
+					String str = new String(data) ;
+					System.out.println("MySink: " + str);
+					try {
+						Thread.sleep(2000);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					return Status.READY ;
+				}
+			}
+		}
+
+	2.导出jar部署到flume/lib下
+		...
+	3.修改配置c_file.conf文件
+		[c_file.conf]
+		[c_file.conf]
+		a1.sources = r1
+		a1.channels = c1
+		a1.sinks = k1
+
+		#define source
+		a1.sources.r1.type = netcat
+		a1.sources.r1.bind = 0.0.0.0
+		a1.sources.r1.port = 8888
+
+		# define channel
+		a1.channels.c1.type = file
+		a1.channels.c1.checkpointDir = /home/centos/flume/chk
+		a1.channels.c1.dataDirs = /home/centos/flume/data
+		#a1.channels.c1.capacity = 500000
+		#a1.channels.c1.transactionCapacity = 5
+
+		#sink
+		a1.sinks.k1.type = com.it18zhang.flume.sink.MySink
+
+		#bind
+		a1.sources.r1.channels=c1
+		a1.sinks.k1.channel=c1
+
+	4.启动flume
+		$>flume-ng agent -f c_file.conf -n a1
+	
+	5.通过for循环发送数据
+		$>for ((x=1;x<10000000;x=$x+1)) ; do echo tom$x ; echo tom$x | nc localhost 8888 ; done

@@ -1,0 +1,642 @@
+hbase
+---------------
+	namespace				//名字空间，目录
+	table					//表，名字空间的子目录
+	region					//区域，表的子目录。
+	column family			//列族,区域的子目录
+
+	[三级坐标]
+	rowid/f:col/version=value
+
+	[写优化]
+	关闭wal
+	禁用client buffer自动清理
+	预切割
+	并发写入
+
+	[查询优化]
+	cache			//batch数。
+	batch			//列数
+	
+hive
+---------------
+	1.使用横向视图查询每个商家和每条tag
+		select busid , x from tags lateral view  explode(taggen(tag)) xx as x where size(taggen(tag)) != 0
+		
+	2.使用双分组统计每个商家每条评论的数量
+		select 
+			t.busid , t.x , count(*) cnt
+		from 
+			(
+				select busid , x from tags lateral view  explode(taggen(tag)) xx as x where size(taggen(tag)) != 0
+			) t
+		group by
+			t.busid , t.x 
+		order by 
+			b.busid , cnt desc ;
+
+	3.对商家内的评论进行聚合，形成数组。
+		select 
+			tt.busid busid , max(tt.cnt) mx, collect_list(concat(tt.x,'(',tt.cnt , ')')) arr
+		from 
+			(
+				select 
+					t.busid busid , t.x x, count(*) cnt
+				from 
+					(
+						select busid , x from tags lateral view  explode(taggen(tag)) xx as x where size(taggen(tag)) != 0
+					) t
+				group by
+					t.busid , t.x 
+				order by 
+					t.busid , cnt desc
+			) tt
+
+		group by 
+			tt.busid 
+		order by
+			mx desc ;
+
+	4.limit处理
+		select 
+			ttt.busid , ttt.mx , if(size(ttt.arr) > 3 , array(ttt.arr[0],ttt.arr[1],ttt.arr[2],ttt.arr[3]) , ttt.arr)
+		from
+			(
+				select 
+					tt.busid busid , max(tt.cnt) mx, collect_list(concat(tt.x,'(',tt.cnt , ')')) arr
+				from 
+					(
+						select 
+							t.busid busid , t.x x, count(*) cnt
+						from 
+							(
+								select busid , x from tags lateral view  explode(taggen(tag)) xx as x where size(taggen(tag)) != 0
+							) t
+						group by
+							t.busid , t.x 
+						order by 
+							t.busid , cnt desc
+					) tt
+
+				group by 
+					tt.busid 
+				order by
+					mx desc 
+				limit 20 
+			) ttt
+
+
+
+hbase过滤器
+------------------
+	Scan
+	startKey				//避免全表扫描
+	stopKey					//
+
+	RowFilter				//Cell
+	FamilyFilter			//Cell
+	QualifierFilter			//Cell
+	ValueFilter				//Cell
+
+	/**
+	 * 准备数据
+	 */
+	@Test
+	public void prepare() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		for(int i = 0 ; i < 1000 ; i ++){
+			Put put = new Put(Bytes.toBytes("row" + i)) ;
+			put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("id"),Bytes.toBytes(i)) ;
+			put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("name"),Bytes.toBytes("tom" + i)) ;
+			put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("age"),Bytes.toBytes(i % 100)) ;
+			put.addColumn(Bytes.toBytes("f2"),Bytes.toBytes("name"),Bytes.toBytes("tomas" + i)) ;
+			put.addColumn(Bytes.toBytes("f2"),Bytes.toBytes("age"),Bytes.toBytes(i % 20)) ;
+			t.put(put);
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 行过滤器,将满足条件的行内的所有列都返回。
+	 * where rowid = 'row100'
+	 */
+	@Test
+	public void testRowFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan() ;
+		//设置扫描对象的过滤器
+		RowFilter filter = new RowFilter(CompareFilter.CompareOp.LESS , new BinaryComparator(Bytes.toBytes("row100"))) ;
+		scan.setFilter(filter) ;
+		Iterator<Result> it = t.getScanner(scan).iterator() ;
+		while(it.hasNext()){
+			printResult(it.next()) ;
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 列族过滤器,只有满足条件的列族内的列数据返回。
+	 * where family = 'f1'
+	 */
+	@Test
+	public void testFamilyFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan() ;
+		//设置扫描对象的过滤器
+		FamilyFilter filter = new FamilyFilter(CompareFilter.CompareOp.EQUAL,new BinaryComparator(Bytes.toBytes("f1"))) ;
+		scan.setFilter(filter) ;
+		Iterator<Result> it = t.getScanner(scan).iterator() ;
+		while(it.hasNext()){
+			printResult(it.next()) ;
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 列过滤器
+	 * where col = 'name'
+	 */
+	@Test
+	public void testQuarlifierFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan() ;
+		//设置扫描对象的过滤器
+		QualifierFilter filter = new QualifierFilter(CompareFilter.CompareOp.EQUAL , new BinaryComparator(Bytes.toBytes("name"))) ;
+		scan.setFilter(filter) ;
+		Iterator<Result> it = t.getScanner(scan).iterator() ;
+		while(it.hasNext()){
+			printResult(it.next()) ;
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 值过滤器
+	 * where col = 'name'
+	 */
+	@Test
+	public void testValueFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan() ;
+		//设置扫描对象的过滤器
+		ValueFilter filter = new ValueFilter(CompareFilter.CompareOp.EQUAL,new BinaryComparator(Bytes.toBytes(12))) ;
+		scan.setFilter(filter) ;
+		Iterator<Result> it = t.getScanner(scan).iterator() ;
+		while(it.hasNext()){
+			printResult(it.next()) ;
+		}
+		t.close();
+		conn.close();
+	}
+
+
+	/**
+	 *       col        value
+	 * where name like 'tom%'
+	 *
+	 */
+	@Test
+	public void testFilterList() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan();
+		//设置扫描对象的过滤器
+		QualifierFilter colfilter = new QualifierFilter(CompareFilter.CompareOp.EQUAL, new BinaryComparator(Bytes.toBytes("name")));
+		//以"tom"开头的字符串:^tom
+		//以"tom"结尾的字符串:tom$
+		ValueFilter valueFilter = new ValueFilter(CompareFilter.CompareOp.EQUAL, new RegexStringComparator("^tom8"));
+
+		FilterList list = new FilterList(FilterList.Operator.MUST_PASS_ALL);
+		list.addFilter(colfilter);
+		list.addFilter(valueFilter);
+		scan.setFilter(list) ;
+
+		Iterator<Result> it = t.getScanner(scan).iterator();
+		while (it.hasNext()) {
+			printResult(it.next());
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 单列值过滤：过滤一行的，只要满足条件的row，row中的所有cell都返回。
+	 */
+	@Test
+	public void testSingleColumnValueFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan();
+		//设置扫描对象的过滤器
+		SingleColumnValueFilter filter = new SingleColumnValueFilter(Bytes.toBytes("f1"),Bytes.toBytes("age"),
+																			CompareFilter.CompareOp.EQUAL,Bytes.toBytes(12)) ;
+		scan.setFilter(filter)  ;
+
+		Iterator<Result> it = t.getScanner(scan).iterator();
+		while (it.hasNext()) {
+			printResult(it.next());
+		}
+		t.close();
+		conn.close();
+	}
+
+	/**
+	 * 单列值排他过滤：过滤一行的，只要满足条件的row，row中的所有cell都返回。但是不包含条件中的col.
+	 */
+	@Test
+	public void testSingleColumnExcludeValueFilter() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t5"));
+		Scan scan = new Scan();
+		//设置扫描对象的过滤器
+		SingleColumnValueExcludeFilter filter = new SingleColumnValueExcludeFilter(Bytes.toBytes("f1"), Bytes.toBytes("age"),
+																			CompareFilter.CompareOp.EQUAL, Bytes.toBytes(12));
+		scan.setFilter(filter);
+
+		Iterator<Result> it = t.getScanner(scan).iterator();
+		while (it.hasNext()) {
+			printResult(it.next());
+		}
+		t.close();
+		conn.close();
+
+	/**
+	 * Result相当于一行
+	 */
+	private void printResult(Result r) {
+		System.out.println("=================");
+		try {
+			List<Cell> list = r.listCells();
+			for (Cell cell : list) {
+				String rowid = Bytes.toString(CellUtil.cloneRow(cell));
+				String f = Bytes.toString(CellUtil.cloneFamily(cell));
+				String c = Bytes.toString(CellUtil.cloneQualifier(cell));
+				long ts = cell.getTimestamp();
+				String value = Bytes.toString(CellUtil.cloneValue(cell));
+				System.out.printf("%s/%s:%s/%d=%s\r\n", rowid, f, c, ts, value);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+计数器
+----------------
+	实现高速value值的增长，比如点击流计算。
+	节省rpc次数，性能较高。
+	计数器字段使用Long型存放数据。
+	不能使用其他字段。
+
+	@Test
+		public void testMultiIncr() throws IOException {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t6"));
+
+			//多计数器
+			Increment incr = new Increment(Bytes.toBytes("index.html")) ;
+			incr.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("click1"), 1) ;
+			incr.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("click2"), 3) ;
+			incr.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("click3"), 4) ;
+			incr.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("click4"), 7) ;
+
+			t.increment(incr) ;
+			t.close();
+			conn.close();
+		}
+
+
+		/**
+		 *Get方式访问计数器类
+		 */
+		@Test
+		public void testGetIncr() throws IOException {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t6"));
+			Get get = new Get(Bytes.toBytes("index.html")) ;
+			Result r = t.get(get) ;
+			byte[] incrValue = r.getValue(Bytes.toBytes("f1") , Bytes.toBytes("click4")) ;
+			long l = Bytes.toLong(incrValue) ;
+			System.out.println(l);
+			t.close();
+			conn.close();
+		}
+
+		/**
+		 * Get方式访问计数器类
+		 */
+		@Test
+		public void testPutIncr() throws IOException {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t6"));
+			//put方式访问计数器列
+			Put put = new Put(Bytes.toBytes("index.html")) ;
+			put.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("click4") , Bytes.toBytes(5)) ;
+			t.put(put);
+
+			t.close();
+			conn.close();
+		}
+
+count
+-----------------
+	统计表函数。
+	//interval :计算间隔, cache:缓冲的行数。
+	$hbase>count 'ns1:t1' , interval => 10000 , cache=> 2000 
+
+
+delete一行数据
+------------------
+	$hbase>deleteall 'ns1:t6' , 'index.html'
+
+练习
+----------------
+	
+	where	((name like 't%') and (age < 12))
+							or
+			((name like '%t') and (age >= 12))
+
+
+scan
+--------------
+	扫描时，可以使用原生扫描，扫描到所有的cell，包括删除的。
+	不能指定特定列,添加列族是可以的。
+	RAW和VERSIONS必须大写。
+
+	$hbase>scan 'ns1:t7' , {RAW=>true , VERSIONS => 4}
+
+	@Test
+	public void testRawScan() throws Exception {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t7"));
+		Scan scan = new Scan();
+		scan.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("name"));
+		scan.setRaw(true) ;
+		scan.setMaxVersions(10) ;
+
+		Iterator<Result> it = t.getScanner(scan).iterator();
+		while (it.hasNext()) {
+			printResult(it.next());
+		}
+		t.close();
+		conn.close();
+	}
+
+
+	//扫描还可以指定时间戳范围，[start,end)区间.
+	$hbase>scan 'ns1:t7' , {RAW=>true , VERSIONS => 4 , TIMERANGE=>[startTS,endTS]}
+	scan.setTimeRange(1516826298611L , 1516826302974L) ;
+
+	//按照具体时间戳
+	$hbase>scan 'ns1:t7' , {RAW=>true , VERSIONS => 4 , TIMESTAMP=>1516826298612}
+	scan.setTimeStamp(1516826298612L) ;
+
+Get
+------------------
+	没有raw操作。
+	//指定时间戳范围,?????显式1条记录?????
+	$hbase>get 'ns1:t7' , 'row1' , {RAW=>true , VERSIONS => 4 , TIMERANGE=>[1516826298611,1516826302974]}
+
+
+Hbase的最大版本数
+-----------------
+	$hbase>create 'ns1:t7' , {NAME=>'f1' , VERSIONS=>5}
+	$hbase>alter 'ns1:t7' , {NAME=>'f1' , VERSIONS=>5}
+
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom2'
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+	$hbase>put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+
+	//清理表，从内存中溢出到磁盘。
+	$hbase>flush 'ns1:t7'
+
+	//压紧列族
+	$hbase>major_compact 'ns1:t7', 'f1'
+
+	//重新扫描,查询到最多5个版本，最大版本数生效
+	$hbase>scan 'ns1:t7' , {RAW=>true , VERSIONS=>10}
+
+最小版本数+TTL组合使用
+---------------
+	1.TTL
+		Time to live,存活时间,秒数.
+		默认值是Forever。
+	
+	2.MIN_VERSIONS
+		最小版本数。默认0.
+
+	TTL控制数据过期，过期后，自动删除，但是保留MIN_VERSIONS数据。
+
+
+KEEP_DELETED_CELLS
+---------------------
+	是否保留删除的cell.
+	flush和major_compact之后仍保留在文件中。
+	alter 'ns1:t7' ,{NAME=>'f1' , KEEP_DELETED_CELLS => true}
+	put 'ns1:t7' , 'row1' , 'f1:name' , 'tom1'
+	put 'ns1:t7' , 'row1' , 'f1:name' , 'tom2'
+	put 'ns1:t7' , 'row1' , 'f1:name' , 'tom3'
+	put 'ns1:t7' , 'row1' , 'f1:name' , 'tom4'
+
+	delete 'ns1:t7' , 'row1' , 'f1:name' , xxx 
+	flush 
+	major_compact
+	scan 
+
+compact操作
+-----------------
+	重压，轻压.
+	major_compact				//重压 ,将一个区域的所有文件合成一个大文件。
+	compact						//轻压,最近生成的几个文合成一个大文件。
+
+close_region
+-----------------
+	关闭一个区域，一旦关闭，区域始终处于关闭状态。
+	需要通过assign重新启动区域。
+	close_region 'regeion_name'						//请求master关闭该区域,需要使用区域全限定名
+	close_region 'regeion_name' , 'server_name'		//请求server，直接关闭该区域,只需要编码区域名
+
+	$hbase>close_region 'ns1:t1,row100,1516836204881.5b2685cd121f03c342628f5515abbe3a.'
+
+	$hbase>scan 'ns1:t1' , {STARTROW=>'row001' , STOPROW=>'row100'}
+	$hbase>scan 'ns1:t1' , {STARTROW=>'row001' , LIMIT=>20}
+
+
+assign
+-----------------
+	开启区域，如果已经开启了，hbase会强制进行reassign。
+	$hbase>assign 'ns1:t1,row100,1516836204881.5b2685cd121f03c342628f5515abbe3a.'
+
+
+协处理器
+-----------------
+	coprocessor,
+	类似于RDBMS的trigger.
+	主要用于批处理。
+	有两类型协处理器:
+	1)Observer
+		观察者.
+		类似于trigger.
+		1.1)RegionObserver
+			处理数据修改事件。
+
+		1.2)MasterObserver
+			处理DDL事件。
+
+		1.3)WALObserver
+			处理WAL。
+
+	2)Endpoint
+		终端
+		类似于存储过程。
+
+RegionObserver编程
+------------------------
+	1.实现RegionObserver的coprocessor
+		package com.it18zhang.hbase.coprocessor;
+
+		import org.apache.hadoop.hbase.Cell;
+		import org.apache.hadoop.hbase.CoprocessorEnvironment;
+		import org.apache.hadoop.hbase.client.Durability;
+		import org.apache.hadoop.hbase.client.Get;
+		import org.apache.hadoop.hbase.client.Put;
+		import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
+		import org.apache.hadoop.hbase.coprocessor.ObserverContext;
+		import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+		import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
+		import org.apache.hadoop.hbase.util.Bytes;
+
+		import java.io.FileNotFoundException;
+		import java.io.FileOutputStream;
+		import java.io.IOException;
+		import java.util.List;
+
+		/**
+		 * 定义区域观察者
+		 */
+		public class MyRegionObserver extends BaseRegionObserver{
+			@Override
+			public void start(CoprocessorEnvironment e) throws IOException {
+				super.start(e);
+				writeLog("start()");
+			}
+
+			@Override
+			public void stop(CoprocessorEnvironment e) throws IOException {
+				super.stop(e);
+				writeLog("stop()");
+			}
+
+			@Override
+			public void preOpen(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
+				super.preOpen(e);
+				String rg = e.getEnvironment().getRegionInfo().getRegionNameAsString() ;
+				writeLog("preOpen() : " + rg);
+			}
+
+			@Override
+			public void postOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
+				super.postOpen(e);
+				String rg = e.getEnvironment().getRegionInfo().getRegionNameAsString();
+				writeLog("postOpen() : " + rg);
+			}
+
+			@Override
+			public void preClose(ObserverContext<RegionCoprocessorEnvironment> c, boolean abortRequested) throws IOException {
+				super.preClose(c, abortRequested);
+				writeLog("preClose()");
+			}
+
+			@Override
+			public void postClose(ObserverContext<RegionCoprocessorEnvironment> e, boolean abortRequested) {
+				super.postClose(e, abortRequested);
+				writeLog("postClose()");
+			}
+
+			@Override
+			public void preFlush(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
+				super.preFlush(e);
+				writeLog("preFlush()");
+			}
+
+			@Override
+			public void postFlush(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
+				super.postFlush(e);
+				writeLog("postFlush()");
+			}
+
+			@Override
+			public void preGetOp(ObserverContext<RegionCoprocessorEnvironment> e, Get get, List<Cell> results) throws IOException {
+				super.preGetOp(e, get, results);
+				String rowid = Bytes.toString(get.getRow()) ;
+				writeLog("preGetOp() : " + rowid);
+			}
+
+			@Override
+			public void postGetOp(ObserverContext<RegionCoprocessorEnvironment> e, Get get, List<Cell> results) throws IOException {
+				super.postGetOp(e, get, results);
+				String rowid = Bytes.toString(get.getRow());
+				writeLog("postGetOp() : " + rowid);
+			}
+
+			@Override
+			public void prePut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, Durability durability) throws IOException {
+				super.prePut(e, put, edit, durability);
+				String rowid = Bytes.toString(put.getRow());
+				writeLog("prePut() : " + rowid);
+			}
+
+			@Override
+			public void postPut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, Durability durability) throws IOException {
+				super.postPut(e, put, edit, durability);
+				String rowid = Bytes.toString(put.getRow());
+				writeLog("postPut() : " + rowid);
+			}
+
+			private void writeLog(String log){
+				try {
+					FileOutputStream fos = new FileOutputStream("/home/centos/copro.log",true) ;
+					fos.write((log+ "\r\n").getBytes());
+					fos.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+	2.导出jar包，部署到hbase集群
+		略.
+
+	3.配置hbase-site.xml
+		[conf/hbase-site.xml]
+		<property>
+			<name>hbase.coprocessor.region.classes</name>
+			<value>com.it18zhang.hbase.coprocessor.MyRegionObserver</value>
+		</property>
+		
+	4.重启hbase集群
+		$>start-hbase.sh
+	
+	5.执行put/get/close_region/assign

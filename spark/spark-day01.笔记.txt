@@ -1,0 +1,353 @@
+ hadoop
+-------------
+	common		//
+	hdfs		//分布式存储
+	mapreduce	//mr执行
+	yarn		//资源调度
+
+Spark
+------------
+	快如闪电集群计算引擎。
+	应用于大规模数据处理快速通用引擎。
+	内存计算。
+	
+
+	[Speed]
+	计算速度是hadoop的100x(内存),10x(磁盘计算).
+	Spark有高级DAG(Direct acycle graph,有向无环图)执行引擎。
+
+	[易于使用]
+	使用java,scala,python,R编写App。
+	提供了80+高级算子，能够轻松构建并行应用。
+	也可以使用scala，python，r的shell进行交互式操作
+
+	[通用性]
+	对SQL，流计算，复杂分析进行组合应用。
+	spark提供了类库栈，包括SQL，MLlib，graphx，Spark streaming.
+
+	[架构]
+	Spark core
+	spark SQL
+	spark streaming
+	spark mllib
+	spark graphx
+
+	[到处运行]
+	spark可以运行在hadoop,mesos,standalone,clound.
+	可以访问多种数据源，hdfs，hbase，hive，Cassandra, S3.
+
+	
+spark集群部署模式
+------------------
+	1.local
+	2.standalone
+	3.mesos
+	4.yarn
+
+
+安装spark
+----------------
+	1.下载spark-2.1.0-bin-hadoop2.7.tgz
+	2.解压
+	3.配置环境变量
+		[/etc/profile]
+		...
+		export SPARK_HOME=/soft
+		export PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
+		
+	4.source
+		source /etc/profile
+
+	5.进入spark shell
+		$>spark/bin/spark-shell
+		$scaka>1 + 1
+
+	6.实现spark的wordcount
+		$scala>sc.textFile("file:///home/centos/1.txt").flatMap(_.split(" ")).map((_,1)).reduceByKey(_+_).collect
+
+查看job webui
+--------------------
+	http://192.168.231.101:4040
+
+
+RDD
+--------------------
+	resilient distributed dataset,
+	弹性分布式数据集。
+	类似于java中集合.
+
+idea下实现spark编程
+--------------------
+	1.常见模块
+	2.添加maven
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-spark</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.spark</groupId>
+					<artifactId>spark-core_2.11</artifactId>
+					<version>2.1.0</version>
+				</dependency>
+			</dependencies>
+		</project>
+
+	3.编程
+		import org.apache.spark.{SparkConf, SparkContext}
+
+		/**
+		  */
+		object WordCountScala {
+
+			def main(args: Array[String]): Unit = {
+				//常见spark配置对象
+				val conf = new SparkConf()
+				conf.setAppName("wcScala")
+				conf.setMaster("local")
+
+				//创建spark上下文
+				val sc = new SparkContext(conf)
+
+				//加载文件
+				val rdd1 = sc.textFile("file:///d:/1.txt")
+				//压扁
+				val rdd2 = rdd1.flatMap(_.split(" "))
+				//标1成对(word,1)
+				val rdd3 = rdd2.map(e=>(e,1))
+				//按key聚合
+				val rdd4 = rdd3.reduceByKey(_+_)
+				val arr = rdd4.collect()
+				for(e <- arr){
+					println(e)
+				}
+			}
+		}
+
+
+java版实现wc
+-------------------
+	import org.apache.spark.SparkConf;
+	import org.apache.spark.SparkContext;
+	import org.apache.spark.api.java.JavaPairRDD;
+	import org.apache.spark.api.java.JavaRDD;
+	import org.apache.spark.api.java.JavaSparkContext;
+	import org.apache.spark.api.java.function.FlatMapFunction;
+	import org.apache.spark.api.java.function.Function2;
+	import org.apache.spark.api.java.function.PairFunction;
+	import org.apache.spark.rdd.RDD;
+	import scala.Function1;
+	import scala.Tuple2;
+
+	import java.util.Arrays;
+	import java.util.Iterator;
+	import java.util.List;
+
+	/**
+	 * Created by Administrator on 2018/2/27.
+	 */
+	public class WordCountJava {
+		public static void main(String[] args) {
+			SparkConf conf  = new SparkConf();
+			conf.setAppName("wcJava") ;
+			conf.setMaster("local");
+
+			//创建spark上下文
+			JavaSparkContext sc = new JavaSparkContext(conf);
+
+			//加载文件
+			JavaRDD<String> rdd1 = sc.textFile("file:///d:/1.txt");
+
+			//压扁
+			JavaRDD<String> rdd2 = rdd1.flatMap(new FlatMapFunction<String, String>() {
+				public Iterator<String> call(String s) throws Exception {
+					String[] arr = s.split(" ");
+					return Arrays.asList(arr).iterator();
+				}
+			}) ;
+
+			//标1成对
+			JavaPairRDD<String,Integer> rdd3 = rdd2.mapToPair(new PairFunction<String, String, Integer>() {
+				public Tuple2<String, Integer> call(String s) throws Exception {
+					return new Tuple2<String, Integer>(s,1);
+				}
+			}) ;
+			//聚合计算
+			JavaPairRDD<String,Integer> rdd4 = rdd3.reduceByKey(new Function2<Integer, Integer, Integer>() {
+				public Integer call(Integer v1, Integer v2) throws Exception {
+					return v1 + v2;
+				}
+			}) ;
+			//
+			List<Tuple2<String,Integer>> list = rdd4.collect();
+			for (Tuple2<String,Integer> t : list) {
+				System.out.println(t._1 + " : " + t._2());
+			}
+		}
+	}
+
+搭建spark集群
+-----------------
+	1.模式
+		local
+		standalone			//独立模式
+		mesos
+		yarn
+	2.部署spark成standalone
+		2.1)规划
+			s101 ~ s104
+			s101		//master
+			s102		//worker
+			s103		//worker
+			s104		//worker
+
+		2.2)分发s101spark安装目录到所有节点
+			$>su centos
+			$>xsync.sh /soft/spark-
+			$>xsync.sh /soft/spark
+
+			$>su root
+			$>xsync.sh /etc/profile
+
+		2.3)在spark的conf目录下创建到hadoop的配置文件的软连接
+			xcall.sh "ln -s /soft/hadoop/etc/hadoop/hdfs-site.xml /soft/spark/conf/hdfs-site.xml"
+			xcall.sh "ln -s /soft/hadoop/etc/hadoop/core-site.xml /soft/spark/conf/core-site.xml"
+
+		2.4)修改slaves文件
+			[spark/conf/slaves]
+			s102
+			s103
+			s104
+
+		2.4')配置/spark/conf/spark-env.sh并分发
+			export JAVA_HOME=/soft/jdk
+
+		2.5)先启动hadoop的hdfs
+			2.5.1)启动zk
+				[s101]
+				$>xzk.sh start
+
+			2.5.2)启动hdfs
+				[s101]
+				start-dfs.sh
+		2.6)启动spark集群
+			$>spark/sbin/start-all.sh
+
+		2.7)验证webui
+			http://s101:8080
+
+
+启动spark-shell，连接到spark集群,实现wordcount
+--------------------------------
+	$>spark-shell --master spark://s101:7077
+	$scala>sc.textFile("hdfs://mycluster/user/centos/1.txt").flatMap(_.split(" ")).map((_,1)).reduceByKey(_+_).collect
+
+导出程序jar包，丢到spark集群上运行
+---------------------------------
+	1.修改master地址
+		conf.setMaster("spark://s101:7077")
+		...
+	2.导出jar包
+		略
+	3.传递jar到centos
+		
+	4.执行一下命令，实现程序在spark集群上运行
+		spark-submit --master spark://s101:7077 --class WordCountScala my-spark.jar
+		spark-submit --master spark://s101:7077 --class WordCountJava my-spark.jar
+
+在spark中处理数据倾斜
+------------------------
+	1.以local方式启动spark-shell
+		$>spark-shell --master local[4]
+
+	2.wordcount
+		$>sc.textFile("file:///home/centos/1.txt").flatMap(_.split(" ")).map(e=>(e + "_" + scala.util.Random.nextInt(10) ,1)).reduceByKey(_+_).map(t=>(t._1.substring(0,t._1.lastIndexOf("_")),t._2)).reduceByKey(_+_).collect
+
+
+spark集群管理
+-----------------------
+	[启动]
+	start-all.sh						//启动所有spark进程
+	start-master.sh						//启动master节点
+	start-slave.sh spark://s101:7077	//单独启动worker节点
+	start-slaves.sh						//master节点启动所有worker节点
+
+	[停止]
+	stop-all.sh							//停止所有进程
+	stop-master.sh						//停止master进程
+	stop-slave.sh						//停止worker节点
+	stop-slaves.sh						//停止所有worker节点
+
+
+Spark API
+------------------------
+	1.SparkConf
+		spark应用程序的配置信息，用于设置各种kv对。
+		通常使用new操作即可，加载spark.*的系统属性，
+		也可以使用set()方法设置.
+		通过该对象创建SparkContext之后，该属性进行克隆，
+		不能在进行修改。
+		spark不支持运行时修改配置。
+
+	2.SparkContext
+		Spark上下文。
+		Spark功能的主入口点，表示为到spark集群的连接，可以创建RDD，累加器和广播变量。
+		每个JVM只能有一个sparkContext，创建新的sc之前需要stop掉旧的上下文。
+	
+	3.RDD
+		Resilient Distributed Dataset (RDD)
+		弹性分布式数据集。
+		表示不可变、分区化的元素集合，可以并行操作。
+		该类包含可用于所有RDD的基本操作。
+		PairRDDFunctions包含了所有针对KV类型的操作。
+
+		轻量级的集合		//RDD没有实质性数据，有的是操纵数据需要的组件。
+
+		内部，RDD有5方面主要属性：
+		1)分区列表
+		2)计算每个切片的函数
+		3)对其他RDD的依赖列表
+		4)(可选)针对KV RDD的分区器
+		5)(可选)计算每个切片的首选位置列表
+		
+		spark所有的调度和执行都是基于这些方法，也可以自定义RDD实现。
+
+		[transformation]
+		变换
+		map
+		filter
+		flatMap
+		reduceByKey()
+		groupByKey
+
+		[action]
+		动作。
+		collect()
+		foreach()
+		take(1)
+		first()
+		count()
+		saveAsTextFile
+
+
+
+	--------------------------------------------------
+				java		|			scala
+	--------------------------------------------------
+	obj instanceof String		obj.isInstanceOf[String]
+	(String)obj					obj.asInstanceOf[String]
+	Class clz = String.class	val clz:Class = classOf[String]
+	obj.getClass()				obj.getClass()
+
+作业
+----------------------------
+	taggen使用spark实现。
+	scala + java分别实现。
+
+	

@@ -1,0 +1,339 @@
+de4edspark yarn
+--------------
+	不需要spark集群，执行hadoop的提交job流程。
+	client安装spark即可，hadoop的mr最后孵化出的是yarnchild子进程，
+	执行的是hadoop mr job。
+
+	spark yarn最后孵化出的是spark的executor，里面运行的spark的task。
+
+spark job部署模式
+-------------------
+	driver运行的地点。
+	1.client
+		spark-shell只能在该方式下运行。
+	2.cluster
+		某个worker上。
+		普通job可以运行。
+
+
+shuffle管理
+-------------------
+	ShuffleManager,是shuffle系统可插拔接口。
+	ShuffleManager在driver和每个executor通过SparkEnv进行创建.
+	基于spark.shuffle.manager的配置创建相应shuffleManager实现。
+	在spark 2.1.0中只有SortShuffleManager.
+	在spark 1.6.0中有SortShuffleManager和HashShuffleManager.
+
+	spark.shuffle.manager=sort
+	spark.shuffle.manager=tungsten-sort(钨丝排序)
+
+
+
+	[HashShuffleManager]
+	spark.shuffle.consolidateFiles=true,默认false，合并输出。
+	slot = 并发能力 = 并发执行的线程数 = (执行器个数 * 每个执行器的cpu内核数) / 每个任务占用的内核数。
+
+
+	
+	spark 2.1.0的实现类是SortShuffleManager.
+	[SortShuffleManager]
+		基于排序的shuffle，输入kv按照目标分区的id进行排序,然后写入一个map输出文件。
+		reducer读取连续文件区域来提取数据。map内存不足，溢出到磁盘,磁盘上的文件最终输出到一个文件中。
+
+		该方式的shuffle有两种途径生成map输出文件:
+		1.串行化排序(以下三个条件均满足使用)
+			a)shuffle依赖没有指定聚合或者输出排序
+			b)shuffle序列化器支持序列化值的重新定位。(当前只有KryoSerializer和SQL的Serializer可以,java不可以)
+			c)shuffle生成的分区少于16777216个（16M）
+
+		2.反串行排序
+			所有其他情况。
+	
+	[串行化排序模式]
+		该模式下，传递给ShuffleWriter的record即可被串行化，排序时也是串行化进行缓冲。该方式有几点优化
+		处理:
+		1.对串行化的二进制数据进行排序，而不是针对java对象，因此可以减少内存消耗和过度GC。
+		  该优化机制要求串行化器具有特殊的属性能够对串行的record进行重排序，不需要反串过程。
+
+		2.使用串行化的具有高效缓存特征的sorter，可以对压缩的record指针和分区id的数组进行排序。
+		  数组中，每条record使用8字节空间存储。
+
+		3.溢出合并过程对串行化的数据块（属于同一分区）进行操作,并且合并期间不需要反串(流)。
+
+		4.支持压缩文件块的合成，合并过程简单的将压缩和串行化的分区最终合并成一个分区文件,
+		  支持高效数据复制方式，例如NIO中的零拷贝。
+		
+
+
+SortShuffleManager.registerShuffleHandle
+-----------------------------------------
+	1.BypassMergeSortShuffleHandle
+		绕过sortShuffle，本至是回退到之前采用hash方式进行shuffle.
+		SortShuffleWriter.shouldBypassMergeSort(SparkEnv.get.conf, dependency)
+		
+		判断条件：
+			1.map端不需要combine，
+			2.同时shuffle的分区数 <= (spark.shuffle.sort.bypassMergeThreshold", 200)
+
+		实例:
+			reduceBykey()
+			groupByKey()
+
+	2.SerializedShuffleHandle
+		串行化对象后进行shuffle，对串行化有要求，支持串行化数据的relocate，节省内存。
+		SortShuffleManager.canUseSerializedShuffle(dependency)
+		1.dependency.serializer.supportsRelocationOfSerializedObjects
+			JavaSerializer不支持(默认)
+			KryoSerializer有条件支持
+		2.不能含有聚合算子。
+		3.分区数不能 > PackedRecordPointer.MAXIMUM_PARTITION_ID + 1(16M)
+
+	3.BaseShuffleHandle
+		其他.
+
+ShuffleWriter不同实现
+--------------------------
+	1.BypassMergeSortShuffleWriter
+		优先级高。
+		需要BypassMergeSortShuffleHandle
+		本质上使用的hash方式的shuffle，将record写入单独的文件，每个分区一个文件，
+		然后合并分区内所有输出到一个到一个输出文件。record不进行缓存。
+		该方式对于大量的reduce分区效率低下,原因是对所有分区同时开启了串行化器和文件流
+		
+	2.UnsafeShuffleWriter
+		优先级 < (1)
+		需要SerializedShuffleHandle
+		//kyro串行化器，支持串行化对象重新定位
+		conf.set("spark.serializer" , "org.apache.spark.serializer.KryoSerializer")
+		//没有mapcombine，也没有聚合算子。
+		val rdd3 = rdd2.repartition(8)
+		//让(1)不满足
+		conf.set("spark.shuffle.sort.bypassMergeThreshold" , "1")
+
+		[写入过程]
+		KV->(partid,(k,v)) ->串行写入kryoSeriailizerStream -> InMemorySorter -> Buf.
+		buf中的记录数 < 1G(个)，否则溢出到磁盘。
+		采用Platform.copyMemory()方法将record数据复制到内核页面。
+
+	3.SortShuffleWriter
+		需要BaseShuffleHandle.
+		[写入分析]
+		1.判断map端是否需要combine
+			new ExternalSorter[K, V, V](context, aggregator = None, Some(dep.partitioner), ordering = None, dep.serializer)
+
+		2.ExternalSorter.insertAll
+			插入有record(kv)到容器中。
+			需要聚合 -> PartitionedAppendOnlyMap,内部机构使用Data[];//Data(x) = (partId, k) => K , Data(x + 1) = V
+			不需要聚合 -> PartitionedPairBuffer
+			写入每条记录到容器后，判断是否spill到磁盘。
+			
+			溢出条件: 
+			elementsRead % 32 == 0 && currentMemory >= myMemoryThreshold(spark.shuffle.spill.initialMemoryThreshold", 5 * 1024 * 1024)
+			shouldSpill || _elementsRead > numElementsForceSpillThreshold(spark.shuffle.spill.numElementsForceSpillThreshold", Long.MaxValue)
+
+
+
+ShuffleReader
+---------------------
+	BlockStoreShuffleReader唯一的实现类。
+	请求其他node的块存储数据读取map的输出。
+	ShuffleBlockFetcherIterator,该迭代器读取很多block数据，
+	对于本地块，直接通过LocalBlockManager读取，远程的块通过
+	BlockTransferService读取。
+	(BlockID, InputStream)
+
+jvm
+---------------------
+	java runtime area : 
+	1.method area
+		共享
+	2.java stack
+		
+	3.heap
+		共享
+	4.native method stack
+	5.program counter register
+
+	[堆]
+	heap				//堆
+	non-heap			//非堆 , jvm - heap
+	off-heap			//离堆 , memory - jvm
+
+	[堆内内存]
+	young				//eden | survivor (1,2)
+	old
+
+Spark内存管理
+---------------------
+	spark-submit --executor-memory=1g
+	指定spark内存。
+	只是针对堆的管理.
+
+	[MemoryManager]
+	强制在storage和execute之间共享内存的数量。
+	执行内存 : shuffle中执行计算的内存，join，aggregate，sort
+	存储内存 : 用于跨集群，缓存或传播数据的内存。
+
+	实现有两种：
+	1.StaticMemoryManager
+		将堆空间划分成不相交的两个区域,此两个区域完全独立，不存在相互借用的问题。
+		spark.memory.useLegacyMode=true,默认false.
+
+		[spark.shuffle.memoryFraction]
+		shuffle期间，用户cogroup和聚合的内存比例,默认0.2
+
+		[spark.storage.memoryFraction]
+		是spark缓存的内存比例，针对jvm的堆空间的比例，默认0.6。
+		
+
+	2.UnifiedMemoryManager
+		在execution和storage之间存在交叉区间，可以相互借用。
+
+ 		1.spark.memory.fraction
+			用于spark的执行和存储的内存比例，针对(heap - 300m)而言的，默认值是0.6
+			(heap - 300M) * 0.6
+
+ 		2.spark.memory.storageFraction
+			在spark内存中，控制存储内存的比例。默认0.5
+			存储内存 = spark内存 * 0.5 = (heap - 300M) * 0.6 * 0.5
+
+		存储内存可以借用执行内存的空闲空间，执行内存不足时可以收回借出的内存，但最多
+		也只能收回借出的那部分内存，执行内存不能抢存储内存的内存。
+		
+		执行内存也可以借用存储内存空间，不还内存。
+
+	3.内存结构
+		3.0)driver内存配置和executor内存配置。
+			--driver-memory				//driver内存
+			spark.executor.memory		//执行器内存,等价于--executor-memory
+
+		3.1)保留内存
+			默认是300M,程序硬编码实现。
+			//RESERVED_SYSTEM_MEMORY_BYTES = 300M
+			conf.getLong("spark.testing.reservedMemory",if (conf.contains("spark.testing")) 0 else RESERVED_SYSTEM_MEMORY_BYTES)
+			可以通过spark.testing.reservedMemory设置特定的保留内置的大小。
+			spark.testing属性可以控制是否关闭保留内存。
+
+			spark-shell --master spark://s101:7077 --executor-memory 20m --conf spark.testing.reservedMemory=1000000
+			spark-shell --master spark://s101:7077 --executor-memory 20m --conf spark.testing=1
+
+		3.2)系统内存
+			最小 = 保留内存 * 1.5.
+			
+		3.3)内存管理实现原理
+			内存池实现.
+			class MemoryPool{
+				//容量
+				var _poolSize: Long = 0
+				//已使用
+				def memoryUsed: Long
+			}
+			
+			//执行内存池
+			class ExecutionMemoryPool extends MemoryPool{
+			//维护内存
+			memoryForTask = new mutable.HashMap[Long, Long]()
+			}
+
+RDD持久化
+---------------
+	spark在内存中跨操作，在内存(磁盘)中，为了便于重用。
+	1.MEMORY_ONLY
+		存储原生对象在内存中，如果内存不足，有些分区不存储。需要的重新计算,默认级别。
+	2.MEMORY_AND_DISK
+		原生态存储rdd在内存中，不足的分区存到disk.
+
+	3.MEMORY_ONLY_SER 
+		在内存中存储串行化rdd.在具有快速串行化器的时，更加高效。
+		cpu增加压力。
+	4.MEMORY_AND_DISK_SER
+		串行化态存储rdd在内存中，不足的分区存到disk.
+
+	5.DISK_ONLY
+		只在磁盘存储。
+
+	6.MEMORY_ONLY_2
+		等价于memory_only,2是2个节点存放分区数。
+	
+	7.OFF_HEAP
+		离堆存储
+	
+	8.方法（在cache的方法中也是调用的是persist）
+		1.rdd.persist(newLevel: StorageLevel)
+			持久化rdd
+
+		2.rdd.unpersist()
+			撤销持久化。
+
+	9.选择策略
+		默认是合理的。
+		如果内存不足，使用MEMORY_ONLY_SER.
+		轻易不要选择spill到磁盘。
+		如果想要更快容错，可以采用副本策略。
+
+
+广播变量
+-------------------
+	 允许开发人员在每个节点上缓存一份数据，不是每个任务都发送一次拷贝，对于每个节点都采用的大型数据集
+	 适合使用该方式发送。
+
+	 采用类似于BT算法实现的，实现机制如下：
+	 driver切割串行对象成chunk，并存在driver端的blockManager。
+	 在executor中也有blockmanager，需要的话首先从自己的blockmanger中fetch数据，
+	 如果没有，尝试从driver或其他的executor中fetch，fetch到的data存放到自己blockmanger中，
+	 以便供其他executor fetch，有效防止driver因发送多个副本给execcute造成的瓶颈。
+
+	 广播变量实现的原理通过scala的lazy手段实现。
+	 先查出来再做成广播变量使用
+
+	 BT:bit torrent.
+	 我为人人，
+	 RDD以广播变量方式传输的。
+
+	//代码
+	def host() = java.net.InetAddress.getLocalHost().getHostName
+	def pid() = java.lang.management.ManagementFactory.getRuntimeMXBean().getName().split("@")(0)
+	def tid() = Thread.currentThread().getName()
+	def oid(obj: AnyRef, str: String) = obj.toString() + " : " + str
+	def doSend(str: String) = {
+	val sock = new java.net.Socket("s101", 8888)
+	val out = sock.getOutputStream()
+	out.write((str + "\r\n").getBytes())
+	out.flush();
+	out.close();
+	}
+	def sendInfo(obj: AnyRef, str: String) = {
+	   val info = host() + "/" + pid() + "/" + tid() + "/" + oid(obj, str); doSend(info)
+	}
+	//300M
+	//val list = db.find() ;//先找到再进行广播的操作
+	/**********************************/
+	/************    广播变量***********/
+	/**********************************/
+	class Dog(val name: String, age: Int) extends Serializable
+	val d = new Dog("dahuang", 3)
+	//作成广播对象
+	val dd = sc.broadcast(d)
+
+	val rdd1 = sc.makeRDD(1 to 10 , 4)
+	val rdd2 = rdd1.map(e=>{
+		/********************/
+		/***** 访问广播变量   */
+		/********************/
+		val d0 = dd.value
+		val hash = d0.hashCode()
+		val name = d0.name ;
+		sendInfo(this,hash + " : " + e + " : " + name)
+	})
+	rdd2.collect()
+
+
+累加器(用于跟踪和累加)
+---------------------
+	累加器的输入输出可以是不同类型，而且累加的累加工作只应该在action中调用。
+	spark保证任务中累加器的更新只执行一次，变换中可以涉及失败重试，导致累加器的重复执行。
+
+
+作业
+--------------------
+	自定义累加器，收集元素到集合中，回传给累加器。

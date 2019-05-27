@@ -1,0 +1,301 @@
+hbase
+---------------
+	面向列(族)数据库。
+	bigtable
+	随机定位 + 实时读写。
+	高吞吐量。
+	十亿行 * 百万列 * 上千版本
+	构建在hadoop的hdfs上(不需要yarn)。
+	分布式 .
+	
+	NoSQL				//Not only sql
+
+						//不是传统的关系型数据库，key-value
+						//mongo,redis,hbase
+
+
+hbase集群搭建
+-------------------	
+	0.规划
+		hadoop采用ha模式。
+
+		s101				//hmaster节点
+		s102				//hregionserver
+		s103				//hregionserver
+		s104				//hregionserver
+	1.下载hbase
+		hbase-1.2.6-bin.tar.gz
+
+	2.安装
+		tar
+		ln
+		/etc/profile
+
+	3.验证hbase是否
+		$>hbase version
+
+	4.分发hbase到s102 ~ s104
+		$>rsync -lrv /soft/hbase* centos@s102:/soft
+		$>rsync -lrv /soft/hbase* centos@s103:/soft
+		$>rsync -lrv /soft/hbase* centos@s104:/soft
+
+配置hbase集群
+------------------
+	1.关闭hbase内置的zk集群，采用外部zk
+		[conf/hbase-env.sh]
+		...
+		export JAVA_HOME=/soft/jdk
+		...
+		export export HBASE_MANAGES_ZK=false
+		...
+
+	2.配置hbase的hbase-site.xml文件
+		[conf/hbase-site.xml]
+		<configuration>
+				<property>
+						<name>hbase.rootdir</name>
+						<value>hdfs://mycluster/hbase</value>
+				</property>
+				<property>
+						<name>hbase.cluster.distributed</name>
+						<value>true</value>
+				</property>
+				<property>
+						<name>hbase.zookeeper.quorum</name>
+						<value>s102:2181,s103:2181,s104:2181</value>
+				</property>
+		</configuration>
+
+	3.配置regionservers文件
+		[conf/regionservers]
+		s102
+		s103
+		s104
+
+	4.分发配置
+		$>xsync.sh conf
+	
+启动hbase集群
+-----------------
+	1.先启动zk
+		$>xzk.sh start
+
+	2.启动hbase
+		//s101
+		hbase/bin/start-hbase.sh
+			
+	3.查看webui
+		http://s101:16010/
+
+	4.考察zk中节点
+		/hbase/rs/xxx
+		/hbase/master
+
+	4.体验hbase shell
+		//s101
+		$>hbase shell
+		$hbase>help						//查看帮助
+
+
+
+linux awk
+------------------
+	awk '{print $1}' custs.txt			//输出第一列,以空格分割
+	awk -F ',' '{print $1}' custs.txt	//自定义分隔符
+
+	//首行打印hello
+	awk -F ',' 'BEGIN {print "hello"}{print $1}' custs.txt	
+	
+	//尾行打印
+	awk -F ',' 'BEGIN {print "hello"}{print $1} END {print "kkkk"}' custs.txt	
+
+	//动态提取ip
+	ifconfig
+
+	//编写脚本，实现按进程名称杀死进程
+	[_xkill]
+	#!/bin/bash
+	kill -9 `jps | grep $1 | awk '{print $1}'`
+
+	//分发该脚本给所有主机
+	xsync.sh /usr/local/bin/_xkill
+
+	//编写xkill.sh(只有s101有)
+	#!/bin/bash
+	for host in `sed -n '1,$p' /usr/local/bin/.hosts` ;
+	do
+	  tput setaf 2
+	  echo ======== $host ========
+	  tput setaf 7
+
+	  ssh $host "source /etc/profile ; _xkill $1"
+	done
+
+	//执行
+	xkill.sh DataNode
+
+重新初始化hbase集群
+---------------------
+	1.删除zk下hbase节点
+		$>zkCli.sh -server s102:2181
+		$zk>rmr /hbase
+
+	2.需要hbase/conf目录下复制hadoop core-site.xml和hdfs-site.xml并分发。
+
+	3.启动hdfs集群
+		$>start-dfs.sh
+
+	3.启动hbase集群
+		$>start-hbase.sh
+
+	4.启动hbase shell
+		$>hbase shell
+		
+		//帮助
+		$hbase>help
+		//list_namespace
+		$hbase>list_namespace
+
+		//创建空间
+		$hbase>create_namespace 'ns1'
+
+	5.考察hdfs目录
+		/hbase/data/ns1
+
+
+hadoop和HBASE得对应关系
+--------------------------
+	hbase			hadoop
+	--------------------------------
+	namespace		/hbase/data/ns1
+	t1				/hbase/data/ns1/t1
+	region			/hbase/data/ns1/t1/region_encode
+	f1				/hbase/data/ns1/t1/region_encode/f1
+
+
+hbase的key构成
+----------------
+	key : rowkey/f1:col/version
+
+hbase shell
+----------------
+	$hbase>list_namespace						//列出空间
+	$hbase>create_namespace 'ns1'				//创建空间
+	$hbase>create 'ns1:t1' , 'f1' , 'f2'		//创建表,f1和f2是两个列族
+
+	$hbase>desc 'ns1:t1'						//查看表结构
+	$hbase>put 'ns1:t1' , 'row1' , 'f1:id' , 1	//插入
+	$hbase>put 'ns1:t1' , 'row1' , 'f1:name', 'tom'	
+	$hbase>put 'ns1:t1' , 'row1' , 'f1:age' , 12	
+
+	$hbase>scan 'ns1:t1'						//扫描全表
+	$hbase>get 'ns1:t1'	, 'row1'				//查找指定row
+	$hbase>delete 'ns1:t1' , 'row1' , 'f1:id'
+
+	$hbase>disable 'ns1:t1'						//禁用表
+	$hbase>drop 'ns1:t1'0						//删除表,需要先禁用
+	$hbase>drop_namespace 'ns1'					//删除名字空间
+	$hbase>truncate 'ns1:t1'					//请空表,disable->drop ->create
+
+
+hbase API编程
+--------------------
+	1.创建模块添加maven支持
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-hbase</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.hbase</groupId>
+					<artifactId>hbase-client</artifactId>
+					<version>1.2.6</version>
+				</dependency>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+			</dependencies>
+
+		</project>
+
+	2.复制hbase-site.xml + core-site.xml + hdfs-site.xml到resources目录下
+		
+	3.编写测试代码
+		package com.it18zhang.hbase.test;
+
+		import com.sun.xml.internal.messaging.saaj.client.p2p.HttpSOAPConnectionFactory;
+		import org.apache.hadoop.conf.Configuration;
+		import org.apache.hadoop.hbase.*;
+		import org.apache.hadoop.hbase.client.*;
+		import org.apache.hadoop.hbase.util.Bytes;
+		import org.junit.Test;
+
+		import java.io.IOException;
+
+		/**
+		 * Created by Administrator on 2018/1/22.
+		 */
+		public class TestHbase {
+			/**
+			 * 创建名字空间
+			 */
+			@Test
+			public void createNS() throws Exception {
+				Configuration conf = HBaseConfiguration.create();
+				//创建连接
+				Connection conn = ConnectionFactory.createConnection(conf) ;
+				Admin admin = conn.getAdmin();
+				//构建器模式创建ns
+				NamespaceDescriptor nsd = NamespaceDescriptor.create("ns2").build() ;
+				admin.createNamespace(nsd);
+				System.out.println("");
+				//
+			}
+			/**
+			 * 创建名字空间
+			 */
+			@Test
+			public void createTable() throws Exception {
+				Configuration conf = HBaseConfiguration.create();
+				//创建连接
+				Connection conn = ConnectionFactory.createConnection(conf) ;
+				Admin admin = conn.getAdmin();
+
+				//创建表名对象
+				TableName tn = TableName.valueOf("ns2:t1") ;
+				//创建表描述符
+				HTableDescriptor t = new HTableDescriptor(tn) ;
+				HColumnDescriptor f1 = new HColumnDescriptor("f1") ;
+				HColumnDescriptor f2 = new HColumnDescriptor("f2") ;
+				t.addFamily(f1) ;
+				t.addFamily(f2) ;
+
+				//创建表
+				admin.createTable(t);
+			}
+
+			/**
+			 *
+			 * @throws Exception
+			 */
+			@Test
+			public void createPut() throws Exception {
+				Configuration conf = HBaseConfiguration.create();
+				//创建连接
+				Connection conn = ConnectionFactory.createConnection(conf) ;
+				Table t = conn.getTable(TableName.valueOf("ns2:t1"));
+				Put put = new Put(Bytes.toBytes("row1"));
+				put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("name"),Bytes.toBytes("tom")) ;
+				t.put(put);
+			}
+		}
+
+

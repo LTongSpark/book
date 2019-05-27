@@ -1,0 +1,399 @@
+spark rdd transformation
+--------------------------
+	1.repartition
+		shuffle
+	
+	2.coascese
+		[推荐]
+		coascese(shuffle = true)
+	
+	3.reduceByKey
+		mapCombine=true,
+		Int => Int
+
+	4.groupByKey
+		mapCombine=false ;
+		
+	5.combineByKeyWithClassTag[C](
+			fCombine : => , 
+			f2:(C,V) => C
+			f3:(C,C) => C
+			//控制是否在map端聚合。
+			mapCombine:Boolean = false
+		)
+	
+	6.distinct
+		reduceByKey()
+	
+	7.join
+	
+	8.foreachPartition
+		action ;
+		conn ..
+		for(){
+		  ..
+		}
+		conn.commit();
+
+	9.foreach()
+		action ;
+		(E) => {
+			Connection 
+			conn ..
+
+		}
+
+	10.map
+
+并发度
+----------------
+	分区数并发度。
+	textFile(,4)
+
+并发能力
+----------------
+	线程数。
+	local[*]
+
+
+RDD , Stage , partition, split , task , 
+---------------------------------------
+
+
+
+spark资源配置
+-----------------
+	1.内核和内存资源配置。
+		
+	2.spark-env.sh
+		# Options for the daemons used in the standalone deploy mode
+		# - SPARK_MASTER_HOST, to bind the master to a different IP address or hostname
+		# - SPARK_MASTER_PORT / SPARK_MASTER_WEBUI_PORT, to use non-default ports for the master
+		# - SPARK_MASTER_OPTS, to set config properties only for the master (e.g. "-Dx=y")
+		# - SPARK_WORKER_CORES, to set the number of cores to use on this machine
+		# - SPARK_WORKER_MEMORY, to set how much total memory workers have to give executors (e.g. 1000m, 2g)
+		# - SPARK_WORKER_PORT / SPARK_WORKER_WEBUI_PORT, to use non-default ports for the worker
+		# - SPARK_WORKER_INSTANCES, to set the number of worker processes per node
+		# - SPARK_WORKER_DIR, to set the working directory of worker processes
+		# - SPARK_WORKER_OPTS, to set config properties only for the worker (e.g. "-Dx=y")
+		# - SPARK_DAEMON_MEMORY, to allocate to the master, worker and history server themselves (default: 1g).
+		# - SPARK_HISTORY_OPTS, to set config properties only for the history server (e.g. "-Dx=y")
+		# - SPARK_SHUFFLE_OPTS, to set config properties only for the external shuffle service (e.g. "-Dx=y")
+		# - SPARK_DAEMON_JAVA_OPTS, to set config properties for all daemons (e.g. "-Dx=y")
+		# - SPARK_PUBLIC_DNS, to set the public dns name of the master or workers
+		SPARK_WORKER_CORES=8
+		#
+		SPARK_WORKER_MEMORY=8192M
+
+	3.分发spark-env.sh配置文件
+	
+	4.启动job时，指定资源使用。
+		$>spark-submit 
+			--driver-memory MEM			//设置driver内存，默认1g，配置2g
+			--executor-memory MEM		//控制每个执行器内存,默认1g
+
+			[只在standalone模式下]
+			--driver-cores				//控制driver使用的内核数，默认1.
+
+			[standalone & mesos]
+			--total-executor-cores NUM	//控制执行器使用的总内核数
+
+			[standalone & yarn]
+			--executor-cores NUM		//控制每个执行的内核数。
+			
+			[yarn]
+			--driver-cores NUM			//控制driver内核数,默认1
+			--num-executors NUM			//启动的执行器个数,动态分配内核启用时，数字就是Num的值。
+
+	
+	5.启动spark-shell，手动分配资源
+		//启动3个executor,worker节点不能启动2个executor
+		spark-shell --master spark://s101:7077 --driver-memory 2g --executor-memory 6g --total-executor-cores 4 --executor-cores 1
+		//启动了4个executor,
+		spark-shell --master spark://s101:7077 --driver-memory 2g --executor-memory 3g --total-executor-cores 4 --executor-cores 1
+		//启动了7个executor,
+		spark-shell --master spark://s101:7077 --driver-memory 2g --executor-memory 3g --total-executor-cores 22 --executor-cores 3
+	
+	6.默认并发度
+		启动的executor个数 * core_per_executor = 6 * 3 = 18.
+
+		启动的线程数默认 = 内核数(每个线程使用1个内核),任务在线程中运行,
+		spark中可以通过spark.task.cpus属性指定每个task占用的cpu内核数(默认1)。
+
+		spark-shell --master spark://s101:7077 --driver-memory 2g --executor-memory 3g --total-executor-cores 22 --executor-cores 3 --conf spark.task.cpus=2
+		
+
+
+	7.使用nc查看job在集群上的运行情况。
+		//得到当前主机
+		def host() = java.net.InetAddress.getLocalHost().getHostName
+		//当前进程id
+		def pid() = java.lang.management.ManagementFactory.getRuntimeMXBean().getName().split("@")(0)
+		//
+		def tid() = Thread.currentThread().getName()
+		//
+		def oid(obj:AnyRef , str:String) = obj.toString() + " : " + str
+
+		//
+		def doSend(str:String) = {
+		val sock = new java.net.Socket("s101" , 8888)
+		val out = sock.getOutputStream()
+		out.write((str + "\r\n").getBytes())
+		out.flush();
+		out.close();
+		}
+		def sendInfo(obj:AnyRef,str:String) = {val info = host() + "/" + pid() + "/" + tid() + "/" + oid(obj,str) ; doSend(info)} 
+
+		//执行如下操作
+		[s101启动nc]
+		nc -lk 8888
+
+		//执行命令
+		$scala>sc.makeRDD(1 to 20).map(e=>{sendInfo(this,e.toString) ; e}).collect
+
+	8.结论
+		spark job资源分配，通过参数指定。
+		--driver-memory 2g 
+		--executor-memory 3g 
+		--total-executor-cores 22 
+		--executor-cores 3 --conf spark.task.cpus=2
+
+		确定executor个数，多种条件同时限制，既要满足内存，也有内核。
+		executor启动的线程数默认每个task占用1个内核，可以通过spark.task.cpus指定任务占用的内核数。
+		每个executor启动的线程数 = executor的占用cores / 每个task占用的cores.
+
+
+
+		//收集nc的消息分析
+		集群模式下运行spark job
+		-------------------------
+
+spark集群模式
+------------------
+	local
+	standalone	//独立模式,master + worker
+	yarn
+	mesos		//
+
+
+job部署模式
+----------------
+	1.client
+		默认。
+
+	2.cluster
+		driver运行在spark集群中的某台worker上。
+
+	3.使用方式
+		注意：spark-shell不能使用cluster部署模式。
+	
+		3.1)导出job的jar，上传到hdfs。
+		
+		3.2)使用如下命令提交
+			spark-submit --deploy-mode cluster --master spark://s101:7077 --class SimpleApp hdfs://mycluster/user/centos/my-spark.jar
+
+启动task
+-----------------
+	backendScheduler.send(ReviveOffers) -> Driver.send(launchTask) -> Executor.launchTask(){...}
+
+在master注册workerRegistWorker
+------------------
+	Worker.ask(RegisterWork) -> Master.reply(RegisteredWorker|Failure) -> Worker
+	
+master注册应用过程
+-------------------
+															--> Driver(RegisteredApplication)
+	StandaloneAppClient.send(RegisterApplication) -> master/ 
+														   \
+														    -->worker.send(LaunchExecutor)  -> worker--> .... ExecutorRunner.fetchAndRunExecutor().builder.start() -> Executor;
+															-->Driver.send(ExecutorAdded)
+
+kill App
+------------------
+	webui.ask(RequestKillDriver(id)) -> Master.send(KillDriver) -> Worker.terminateProcess
+
+master
+
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.26 Safari/537.36 Core/1.63.6788.400 QQBrowser/10.3.2767.400","hostName":"dsp.yiche.com","ip":"106.38.97.146, 172.20.16.85","timestamp":"1543302510349","userId":"wangshuo1","userType":"manual"},"infoType":"sensitivelog","operation":{"abnormal":"xxx","act":{"affect":"444433","doType":"insert","useTime":"117"},"optional":{},"type":"test"}}
+
+{"base":{"client":"hue","hostName":"","ip":"","originalCMD":"[20181127 15:58:02] DEBUG    Populating Django user yanxiaotian","originalLogId":"hue-3368","timestamp":1543305482000,"userId":"yanxiaotian","userType":"manual"},"infoType":"loadlog","interfaceId":3000070009,"operation":{"abnormal":"","act":{"action":"authenticate","result":"success"},"type":"auth"},"optional":{"dbName":"","fieldName":"","level":0,"tbName":""}}
+
+
+ for (i <- json_operation) {
+            if (json_text.containsKey(i)) {
+                val operation = json_text.getJSONObject(i)
+                for (i <- json_act) {
+                    if (operation.containsKey(i)) {
+                        val act = operation.getJSONObject(i)
+                        for (i <- json_affect) {
+                            if (act.containsKey(i)) {
+                                affect = act.getString(i)
+                            } else {
+                                affect = "123456"
+                            }
+                        }
+                        for(i <- json_do){
+                            if (act.containsKey(i)) {
+                                print(i)
+                                Do = act.getString(i)
+                            } else {
+                                Do = "tong"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return affect + "111111" + Do
+
+
+----------------
+	receive{
+		1.RegisterApplication
+
+		2.ExecutorStateChanged
+
+		3.DriverStateChanged
+
+		4.UnregisterApplication
+
+		5.RegisterWorker
+
+		6.RequestSubmitDriver
+		7.RequestKillDriver
+		8.RequestExecutors
+		9.KillExecutors
+	}
+
+
+spark + yarn集合
+--------------------
+	yarn模式，不需要spark集群，只是在client安装spark，提交作业时，走的是hadoop的流程。
+	使用spark的jar，在nodemanager上启动的spark的executor进程。
+	--master的值指定yarn即可，rm的地址从配置文件中提取的。
+
+
+	[yarn-client]
+		Appmaster只运行appmaster自身程序。
+		Driver仍然位于client执行。
+
+	[yarn-cluster]
+		driver运行在appmaster上。
+
+	//启动程序
+	1.停止spark集群
+		stop-all.sh
+	2.启动yarn
+		start-yarn.sh
+	3.配置spark的spark-env.sh的HADOOP_CONF_DIR并分发.
+		HADOOP_CONF_DIR=/soft/hadoop/etc/hadoop
+	
+	4.启动spark-shell
+		spark-shell --master yarn --deploy-mode client
+		
+	5.故障诊断
+		出现 is running beyond virtual memory limits. 
+		Current usage: 178.7 MB of 1 GB physical memory used; 2.3 GB of 2.1 GB virtual memory used. Killing container.
+
+		关闭yarn-site.xml虚拟内存检查并分发文件。
+		[yarn-site.xml]
+		<property>
+			<name>yarn.nodemanager.vmem-check-enabled</name>
+			<value>false</value>
+		</property>
+
+		sc.makeRDD(1 to 10).sortBy(e=>{sendInfo(this , e) ; e} ,false).collect
+
+	6.spark yarn运行时将spark的所有jar上传到hdfs，协同hadoop的作业运行流程。
+		配置spark.yarn.jars或者spark.yarn.archive，避免每次上传jar包。
+		1.spark.yarn.jars
+			spark.yarn.jars=hdfs:///some/path
+		2.spark.yarn.archive
+			spark.yarn.archive=hdfs://mycluster/user/centos/spark/spark-jars.zip
+
+		3.配置spark.yarn.archive属性，避免每次上传大的jar包。
+			a)上传zip文件到hdfs://mycluster/user/centos/spark/spark-jars.zip
+			b)配置spark配置文件。
+				[spark/conf/spark-default.conf]
+				spark.yarn.archive hdfs://mycluster/user/centos/spark/spark-jars.zip
+			c)启动shell
+				$>spark-shell --master yarn-client
+
+spark-submit --classorg.apache.spark.examples.JavaWordCount --master yarn --deploy-mode cluster/usr/local/spark/lib/spark-examples-1.6.1-hadoop2.6.0.jar hdfs://[hdfsnamespace]/test/test.txt
+
+
+
+使用自定义分区类解决数据倾斜
+-----------------------------
+	import org.apache.spark.{HashPartitioner, Partitioner, SparkConf, SparkContext}
+
+	/**
+	  * Created by Administrator on 2018/3/2.
+	  */
+	object SimpleApp5 {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("app")
+			conf.setMaster("local[3]")
+
+			//自定义分区类
+			class RandomPartitioner(n:Int) extends Partitioner{
+				override def numPartitions: Int = n
+				//随机分区
+				override def getPartition(key: Any): Int = scala.util.Random.nextInt(n)
+			}
+
+			val sc = new SparkContext(conf)
+			sc.textFile("file:///d:/1.txt")
+				.flatMap(_.split(" "))
+				.map((_,1))
+				.reduceByKey(new RandomPartitioner(4) , _+_)
+				.reduceByKey(new HashPartitioner(3), _+_)
+				.collect()
+				.foreach(println)
+		}
+	}
+
+shuffle管理
+-------------------
+	ShuffleManager,是shuffle系统可插拔接口。
+	ShuffleManager在driver和每个executor通过SparkEnv进行创建。
+	基于spark.shuffle.manager的配置创建相应shuffleManager实现。
+	在spark 2.1.0中只有SortShuffleManager.
+	在spark 1.6.0中有SortShuffleManager和HashShuffleManager.
+
+	[HashShuffleManager]
+	spark.shuffle.consolidateFiles=true,默认false，合并输出。
+	slot = 并发能力 = 并发执行的线程数 = (执行器个数 * 每个执行器的cpu内核数) / 每个任务占用的内核数。
+
+
+
+	spark 2.1.0的实现类是SortShuffleManager.
+	[SortShuffleManager]
+		基于排序的shuffle，输入kv按照目标分区的id进行排序,然后写入一个map输出文件。
+		reducer读取连续文件区域来提取数据。map内存不足，溢出到磁盘,磁盘上的文件最终输出到一个文件中。
+
+		该方式的shuffle有两种途径生成map输出文件:
+		1.串行化排序(以下三个条件均满足使用)
+			a)shuffle依赖没有指定聚合或者输出排序
+			b)shuffle序列化器支持序列化值得重新定位。(当前只有KryoSerializer和SQL的Serializer可以,java不可以)
+			c)shuffle生成的分区少于16777216个.
+
+		2.反串行排序
+			所有其他情况。
+	
+	[串行化排序模式]
+		该模式下，传递给ShuffleWriter的record即可被串行化，排序时也是串行化进行缓冲。该方式有几点优化
+		处理:
+		1.对串行化的二进制数据进行排序，而不是针对java对象，因此可以减少内存消耗和过度GC。
+		  该优化机制要求串行化器具有特殊的属性能够对串行的record进行重排序，不需要反串过程。
+
+		2.使用串行化的具有高效缓存特征的sorter，可以对压缩的record指针和分区id的数组进行排序。
+		  数组中，每条record使用8字节空间存储。
+
+		3.溢出合并过程对串行化的数据块（属于同一分区）进行操作,并且合并期间不需要反串(流)。
+
+		4.支持压缩文件块的合成，合并过程简单的将压缩和串行化的分区最终合并成一个分区文件,
+		  支持高效数据复制方式，例如NIO中的零拷贝。
+		
+		

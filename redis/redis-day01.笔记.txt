@@ -1,0 +1,531 @@
+URL
+--------------
+	Socket , 
+	http://
+	phoenix
+	二级索引
+	正则表达式
+	p = Pattern.compile("<a\\s+href=\"([\u0000-\uffff&&[^\"]]*)\">")
+	Matcher m= p.match(page) ;
+	while(m.find()){
+		m.group(0) ;
+	}
+
+hbase + phoenix
+------------------
+	phoenix构建在hbase之上，使用类SQL。
+	coprocessor , //聚合操作，事务 , 二级索引。
+	NoSQL			//Not only sql,不是关系型数据库，Key-value。
+
+
+redis
+------------------
+	KV类型数据库
+	NoSQL
+	高性能。
+	持久化数据到磁盘
+	类型丰富，不仅仅是简单kv，还支持list,set,hash,zset
+	读 ： 110000/s
+	写 :   81000/s
+
+
+win7上安装redis
+------------------
+	1.解压
+		解压redis-2.2.2-win32-win64.rar
+	
+	2.使用64位目录
+		
+	3.启动redis服务器 
+		运行redis-server.exe
+	4.启动client
+				
+linux上安装redis
+------------------
+	1.下载redis-3.2.8.tar.gz
+
+	2.tar开
+		tar -xzvf redis-3.2.8.tar.gz
+
+	3.使用以下命令安装到指定目录下
+		3.1)需要先安装gcc支持
+			yum install -y gcc
+
+		3.2)再编译安装redis
+			make PREFIX=/soft/redis-3.2.8 install
+
+	4.创建软连接
+		cd /soft
+		ln -s redist-3.2.8 redis
+
+	5.配置etc/profile环境变量
+		[/etc/profile]
+		...
+		export REDIS_HOME=/soft/redis
+		export PATH=$PATH:$REDIS_HOME/bin
+	6.启动redis服务器
+		$>redis-server &
+
+	7.启动cli端程序连接
+		$>redis-cli -h localhost -p 6379
+
+
+redis的client命令
+------------------
+	[常用命令]
+	$redis>help										//查看帮助
+	$redis>help @[tab]								//tab键可以补全所有组
+	$redis>help @generic							//常用命令组
+	$redis>help ping								//常看特定命令的帮助
+
+	$redis>keys *									//查看所有key
+	$redis>keys user*								//查看所有user开头key
+
+	$redis>exists user#1							//查询指定key是否存在
+
+	$redis>del key1									//删除指定的key
+
+	//ttl
+	$redis>expire user:0 10							//设置user:0的key的过期秒数
+	$redis>persist key1								//取消过期设置
+	$redis>ttl user#2								//查询指定key还有多长时间过期
+
+	$redis>select 0									//选择指定数据库
+	$redis>move user#2 1							//移动指定的key到指定的数据库中,库的范围在0 ~ 15
+
+	$redis>set key1 tom1							//设置普通的kv
+	$redis>get key1									//获取指定key
+
+	$redis>randomkey								//随机提取key
+
+	$redis>rename key1 key2							//key1改名成key2
+
+	$redis>type key1								//返回指定key类型
+
+	$redis>ping
+
+	$redis>echo hello world
+	$redis>select n //n = [0,15]
+
+	$redis>quit										//退出
+	$redis>dbsize									//返回数据库key数量
+	$redis>info										//得到数据统计信息
+
+	$redis>monitor									//进入监听模式，只有cli连接进来，会响应。(阻塞模式)
+	$redis>config get dir							//config get是命令,dir
+	$redis>config get protected-mode				//查看保护模式
+	$redis>config set protected-mode no				//关闭保护模式
+
+	$redis>flushdb									//删除当前库的所有key
+	$redis>flushall									//删除所有库的所有key
+	$redis>save										//保存数据到磁盘(前端执行,阻塞)
+	$redis>bgsave									//保存数据到磁盘(后台执行,非阻塞)
+	$redis>clear									//
+
+	[hash类型]
+	类似于map(key-value的集合)
+	$redis>hset cust#1 name tomas age 12			//创建新hash,只有一个字段和一个值。
+	$redis>hget cust#1
+	$redis>hkeys cust#1								//列出hash的所有字段
+	$redis>hgetall cust#1							//列出hash的所有字段和值
+	$redis>hdel cust#1 f1 f2						//删除若干字段
+	$redis>hexists cust#1 f1						//判断字段是否存在
+	$redis>hincrby cust#1 age 1						//递增指定字段值
+	$redis>hincrfloat cust#1 age 1					//递增浮点数
+	$redis>hlen cust#1								//字段个数
+	$redis>hmget cust#1 name age add				//得到指定字段的值
+	$redis>hmset cust#1 name tomas age 33 			//得到指定字段的值(m:multiple)
+	$redis>hmsetnx cust#1 married false				//新增字段(nx : not exists)
+	$redis>hstrlen cust#1 name						//提取指定字段值串长
+	$redis>hvals cust#1								//得到所有值.
+
+
+	[list类型]
+	list有序(添加顺序)，能重复,放倒的栈结构(也可以看成队列)。
+
+	LPUSH list1 tom1 tom2 tom3						//新增list1
+	LRANGE list1 0 -1								//查看指定范围值
+	LRANGE list1 0 3								//查看指定范围值
+	BLPOP list1 list2 10							//对多个list进行pop操作，返回弹出的元素,
+													//如果左侧list为空，则弹出下一个集合。
+	BRPOPLPUSH list1 list2 10						//转移数据，从一个pop出来，push到另一个.
+	RPOPLPUSH list1 list2							//转移数据，从一个pop出来，push到另一个.
+	LPOP list1										//弹栈，不阻塞
+	LINSERT list1 before tom2 tom22					//在tom2之前插入tom22
+	LINSERT list1 after tom3 tom33					//在tom3之后插入tom33
+	Llen list1										//取得列表长度
+	LPUSHX list1 tom5								//在现有list上push元素
+	LREM list1 3 tom4								//从前到后删除指定个数的指定value(因为value可重复)。
+	LSET list1 6 tom200								//修改指定位置的值
+	LTRIM list1 2 3									//保留指定范围的元素，删除其余元素
+	RPOP list1										//删除并返回栈底元素		
+	RPUSH list1 tom2								//右侧压入值
+	RPUSHX list1 tom1								//同上，需要key存在.
+
+	[set类型]
+	无序，不能重复。
+	sadd set1 tom1 tom1 tom2						//创建新set
+	SMEMBERS set1									//查看set所有元素
+	SCARD set1										//元素个数
+	SDIFF set1 set2									//set1 - set2
+	SDIFFSTORE set3 set1 set2						//set3 = set1 -set2
+	SINTER set1 set2								//set1和set2交集
+	SINTERSTORE set4 set1 set2						//set4 = set1 ∩ set2
+	SISMEMBER set1 tom1								//是否含有指定元素
+	SMOVE set1 set2 tom1							//移动tom1从set1到set2
+	SPOP set2 2										//随机删除n个元素
+	SRANDMEMBER set1 2								//随机选择n个元素
+	SREM set1 tom1 tom2								//删除指定的n个元素
+	SSCAN key cursor								//???????????????????
+	SUNION set1 set2 ..								//并集操作
+	SUNIONSTORE set5 set1 set2						//并集存储
+
+	[sorted set]
+	sorted set,不重复，有序集(携带一个score double值，用来排序)
+
+	ZADD z1 1 tom1 2 tom1 3 tom2					//创建新集合
+	ZRANGE z1 0 -1 WITHSCORES						//显式指定范围元素，可以指定是否携带分值
+	ZCARD z1										//返回元素个数
+	ZCOUNT z1 2 5									//统计分值位于指定区间的元素个数,闭区间
+	ZINCRBY z1 3 tom3								//对指定的元素分值增加3
+	ZINTERSTORE z3 2 z1 z2							//交集存储
+	ZLEXCOUNT z1 [tom1 [tom2						// [tom1,tom2]闭区间元素个数
+	ZLEXCOUNT z1 (tom1 (tom2						// (tom1,tom2)闭区间元素个数
+	ZRANGEBYLEX z1 [tom1 [tom2						//查看在min和max之间元素
+	ZRANGEBYSCORE z1 1 3 WITHSCORES LIMIT 1 3		//按照分值进行比较，位于min和max之间的元素，可以分页，1:offset 3:length
+	ZRANK z1 tom1									//检测指定元素索引值
+	ZREM z1 tom1 tom2								//删除多个元素
+	ZREMRANGEBYLEX z1 [tom1 (tom2					//按照元素值范围删除
+	ZREMRANGEBYRANK z1 0 -1							//按照索引删除
+	ZREMRANGEBYSCORE z1 1 3							//按照score删除
+	ZREVRANGE z1 0 -1 WITHSCORES					//按照score倒排序
+	ZREVRANGEBYLEX key max min [LIMIT offset count]
+	ZREVRANGEBYSCORE key max min [WITHSCORES] [LIMIT offset count]
+	ZREVRANK key member
+	ZSCAN key cursor [MATCH pattern] [COUNT count]
+	ZSCORE key member								//获得指定元素的score
+	ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight] [AGGREGATE SUM|MIN|MAX]
+
+	[String]
+	get
+	set
+	mget
+	mset
+	incr
+	incrby
+	decre
+
+
+
+
+使用redis clientAPI访问数据库
+-----------------------------
+	1.创建模块,添加依赖
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-redis</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+				<dependency>
+					<groupId>redis.clients</groupId>
+					<artifactId>jedis</artifactId>
+					<version>2.2.1</version>
+				</dependency>
+			</dependencies>
+		</project>
+
+	2.修改redis保护模式为no
+		$redis>config set protected-mode no
+
+	3.编写测试类
+		Jedis redis = new Jedis("s101", 6379);
+		redis.set("key2", "tom2");
+
+
+redis事务管理
+--------------------------------
+	multi					//标记事务块开始 == start transaction
+	set key1 tom111			//执行一系列命令，将命令放入redis队列。
+	exec					//multi之后执行所有的命令===commit
+	discard					//丢弃所有命令,===rollback
+
+	1.watch
+		对指定的key进行检测，如果当前事务监测了一个key，事务提交前有其他事务
+		修改了该key的值，当前事务失效。
+
+		[A]
+			1.watch key1
+			2.multi
+			3.set key1 tom111 
+			5.exec
+			6.该事务失效。
+		[B]
+			4.set key1 tom222
+
+
+发布订阅(publish - subscribe)模型
+--------------------------------
+	[client-1]
+	$redis-cli>subscribe c1 c2			//订阅指定通道上的消息
+	$redis-cli>							//进入阻塞模式
+
+	[client-2]
+	发布消息
+	$redis-cli>publish c1 hello world
+
+	[API编程]
+	package com.it18zhang.redis.test;
+
+	import org.junit.Test;
+	import redis.clients.jedis.BinaryJedisPubSub;
+	import redis.clients.jedis.Jedis;
+	import redis.clients.jedis.JedisPubSub;
+	import redis.clients.jedis.JedisSentinelPool;
+
+	/**
+	 * Created by Administrator on 2018/1/30.
+	 */
+	public class TestRedis {
+		@Test
+		public void testSet() {
+			Jedis redis = new Jedis("s101", 6379);
+			//8,745,845,306
+			long start = System.nanoTime();
+			for (int i = 0; i < 100000; i++) {
+				redis.set("key" + i, "tom" + i);
+			}
+			System.out.println(System.nanoTime() - start);
+		}
+
+		@Test
+		public void testHash() {
+			Jedis redis = new Jedis("s101", 6379);
+			String name = redis.hget("cust#1", "name");
+			System.out.println(name);
+		}
+
+		@Test
+		public void testWatch() {
+			Jedis redis = new Jedis("s101", 6379);
+			String res = redis.watch("key1");
+			System.out.println(res);
+		}
+
+		@Test
+		public void testPubsub() throws InterruptedException {
+			final Jedis redis = new Jedis("s101", 6379);
+			BinaryJedisPubSub pb = new BinaryJedisPubSub() {
+				public void onMessage(byte[] channel, byte[] message) {
+					System.out.println("onMessage" + new String(message));
+					//取消订阅方法
+					this.unsubscribe();
+				}
+
+				public void onPMessage(byte[] pattern, byte[] channel, byte[] message) {
+					System.out.println(new String(message));
+				}
+
+				public void onSubscribe(byte[] channel, int subscribedChannels) {
+
+				}
+
+				@Override
+				public void onUnsubscribe(byte[] channel, int subscribedChannels) {
+					System.out.println("取消了订阅");
+					System.exit(-1);
+				}
+
+				@Override
+				public void onPUnsubscribe(byte[] pattern, int subscribedChannels) {
+
+				}
+
+				@Override
+				public void onPSubscribe(byte[] pattern, int subscribedChannels) {
+
+				}
+			} ;
+			redis.subscribe(pb, "c1".getBytes());
+			//pb.unsubscribe();
+		}
+	}
+
+
+	//订阅消息
+	redis.subscribe(pb, "c1".getBytes());
+
+	//取消订阅
+	pb.unsubscribe();
+
+
+练习
+--------------
+	将图片存放到redis中。
+	key		 :图片文件名
+	value	 :图片
+
+	value	:value人为约束max : 128M
+
+	//代码实现
+	@Test
+	public void testPutImageInString() throws Exception {
+		final Jedis redis = new Jedis("s101", 6379);
+		FileInputStream fis = new FileInputStream("d:/Koala.gif");
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		byte[] buf = new byte[1024];
+		int len = -1;
+		while ((len = fis.read(buf)) != -1) {
+			baos.write(buf, 0, len);
+		}
+		baos.close();
+		fis.close();
+		byte[] data = baos.toByteArray() ;
+		StringBuilder builder = new StringBuilder() ;
+		for(byte b : data){
+			builder.append(b) ;
+			builder.append(",") ;
+		}
+		redis.set("koala.jpg".getBytes(),builder.toString().getBytes());
+		redis.close();
+	}
+
+	@Test
+	public void testGetImageString() throws Exception {
+		final Jedis redis = new Jedis("s101", 6379);
+		String data = redis.get("koala.jpg");
+		String[] arr = data.split(",");
+		FileOutputStream fos = new FileOutputStream("d:/koala3.gif");
+		for(String s : arr){
+			byte b = Byte.parseByte(s) ;
+//			byte[] bytes = new byte[1] ;
+//			bytes[0] = b ;
+			fos.write(b);
+		}
+		fos.close();
+		redis.close();
+	}
+
+
+redis集群
+------------
+	1.命令启动
+		//server
+		$>redis-server --help
+		$>redis-server
+		$>redis-server xxx.conf
+
+		//client
+		$>redis-client --help
+		$>redis-client
+		$>redis-client -h locahost -p 6379
+	
+	2.集群搭建
+		2.1)创建6个目录，分别放置redis.conf文件
+		2.2)修改文件内容
+			port 6379						//port xxxx
+			daemonize no					//daemonize yes
+			pidfile /var/run/redis_6379.pid	//pidfile /var/run/redis_xxxx.pid
+			bind 127.0.0.1				//bind 192.168.112.101
+			/********************去掉注释*******************/
+			cluster-enabled yes
+			cluster-config-file nodes-xxxx.conf
+			见备注文件。
+			
+			//使用该命令
+			sed -i 's/aaa/bbb/g' a.txt
+
+		2.3)启动所有redis-server
+			redis-server 7000/redis.conf
+			redis-server 7001/redis.conf
+			redis-server 7002/redis.conf
+			redis-server 7003/redis.conf
+			redis-server 7004/redis.conf
+			redis-server 7005/redis.conf
+
+
+		2.4)安装gem
+			$>sudo yum install -y gem
+
+		2.5)删除原gem源
+			gem sources --remove https://rubygems.org/
+
+		2.6)添加新gem源
+			gem sources -a https://gems.ruby-china.org/
+
+		2.7)安装redis3.0.0
+			$>gem install redis --version 3.0.0
+
+		2.8)执行redis源代码包下的redis-trib.rb脚本创建集群。
+			/home/centos/redis-3.2.8/src/redis-trib.rb create --replicas 1 192.168.112.101:7000 192.168.112.101:7001 192.168.112.101:7002 192.168.112.101:7003 192.168.112.101:7004 192.168.112.101:7005
+
+		2.9)启动client，连接到redis集群
+			$>redis-cli -c -p 7000
+			$redis-cli>keys *				//不要使用该命令
+			$redis-cli>get key1				//重定向到其他的进程
+
+
+redis集群管理命令
+-------------------
+	1.杀死所有redis server实例
+		$>cd /soft/redis/conf
+		$>ls |grep 700|grep -v conf | for x in `xargs` ; do kill -9 `cat /var/run/redis_$x.pid` ;done
+			ps -A | grep redis-server | awk '{print $1}'| for pid in `xargs` ; do kill -9 $pid ; done
+
+	2.替换相应的位置
+		***** 注意权限问题(使用root)!!!!!! ****
+		$>su root
+		$>cd /soft/redis/conf
+
+		//设置外网访问
+		$>find . |grep 700 | grep conf | for x in `xargs` ; do sed -i 's/192.168.112.101/192.168.112.101/g' $x ; done
+			find . |grep 700 | grep conf | for x in `xargs` ; do sed -i 's/daemonize no/daemonize yes/g' $x ; done
+
+		//关闭保护模式
+		$>find . |grep 700 | grep conf | for x in `xargs` ; do sed -i 's/protected-mode yes/protected-mode no/g' $x ; done
+
+		//启动6个实例
+		$>find . |grep 700 | grep conf | for x in `xargs` ; do redis-server $x; done
+
+		//分配集群
+		/home/centos/downloads/redis-3.2.8/src/redis-trib.rb create --replicas 1 192.168.112.101:7000 192.168.112.101:7001 192.168.112.101:7002 192.168.112.101:7003 192.168.112.101:7004 192.168.112.101:7005
+
+		//启动client
+		$>redis-cli -c -h 192.168.112.101 -p 7000
+		$redis-cli>set key1 tom1
+		$redis-cli>get key1
+	
+	3.cluster client API
+
+		@Test
+		public void getRedisCluster() throws Exception {
+			Set<HostAndPort> hosts = new HashSet<HostAndPort>();
+			hosts.add(new HostAndPort("192.168.112.101", 7000));
+			hosts.add(new HostAndPort("192.168.112.101", 7002));
+			hosts.add(new HostAndPort("192.168.112.101", 7003));
+			hosts.add(new HostAndPort("192.168.112.101", 7004));
+			hosts.add(new HostAndPort("192.168.112.101", 7005));
+			BinaryJedisCluster cluster = new BinaryJedisCluster(hosts);
+			byte[] value = cluster.get("key1".getBytes()) ;
+			System.out.println(new String(value));
+			cluster.close();
+		}
+
+
+
+作业
+------------
+	redis value限制为max是128M，现将600M文件存储到redis中。
+	提示 ： 切割存储。
+
+

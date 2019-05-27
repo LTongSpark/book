@@ -1,0 +1,245 @@
+hadoop
+-------------
+	daug cutting.
+	
+	namenode : 
+
+
+hbase
+-------------
+	
+hive
+------------
+
+zookeeper
+-------------
+	动物园管理员。
+	协同服务。
+	分布式应用程序做高可用配置。
+
+zk部署
+------------
+	0.安装zk
+		//tar开文件
+		$>tar -xzvf xxx.tar.gz -C /soft/
+		
+		//软连接
+		$>ln -s zookeeper-3.9.0 zk
+
+		//环境变量
+		$>sudo nano /etc/profile
+			...
+			export ZK_HOME=/soft/zk
+			export PATH=$PATH:$ZK_HOME/bin
+
+		//source
+		$>source /etc/profile
+
+	1.配置文件
+		[/soft/zk/conf/zoo.cfg]
+		# The number of milliseconds of each tick
+		tickTime=2000
+		# The number of ticks that the initial
+		# synchronization phase can take
+		initLimit=10
+		# The number of ticks that can pass between
+		# sending a request and getting an acknowledgement
+		syncLimit=5
+		# the directory where the snapshot is stored.
+		# do not use /tmp for storage, /tmp here is just
+		# example sakes.
+		dataDir=/home/centos/zk/data
+		# the port at which the clients will connect
+		clientPort=2181
+		# the maximum number of client connections.
+		# increase this if you need to handle more clients
+		#maxClientCnxns=60
+		#
+		# Be sure to read the maintenance section of the
+		# administrator guide before turning on autopurge.
+		#
+		# http://zookeeper.apache.org/doc/current/zookeeperAdmin.html#sc_maintenance
+		#
+		# The number of snapshots to retain in dataDir
+		#autopurge.snapRetainCount=3
+		# Purge task interval in hours
+		# Set to "0" to disable auto purge feature
+		#autopurge.purgeInterval=1
+
+	2.启动zk服务器
+		$>/soft/zk/bin/zk-Server.sh start		//启动服务器
+		$>/soft/zk/bin/zk-Server.sh stop		//停止服务器
+
+	3.启动zk客户端，验证zk
+		$>/soft/zk/bin/zkCli.sh
+		$zk>ls /								//查看根节点目录
+		$zk>ls /zookeeper						//查看zookeeper
+		$zk>get /zookeeper						//查看zookeeper节点的关联数据
+
+ 搭建zk完全分布式集群
+ -----------------------
+	1.在s102 ~ s104主机上分别安装zk
+		略
+
+	2.修改每个zk的配置文件,为每台zk服务器分配1 ~ 255之间值。
+		[s102:/home/centos/zk/data/myid]
+		102
+
+		[s103:/home/centos/zk/data/myid]
+		103
+
+		[s104:/home/centos/zk/data/myid]
+		104
+		
+	3.修改zk的配置/soft/zk/conf/zoo.cfg
+		[/soft/zk/conf/zoo.cfg]
+		# The number of milliseconds of each tick
+		tickTime=2000
+		# The number of ticks that the initial
+		# synchronization phase can take
+		initLimit=10
+		# The number of ticks that can pass between
+		# sending a request and getting an acknowledgement
+		syncLimit=5
+		# the directory where the snapshot is stored.
+		# do not use /tmp for storage, /tmp here is just
+		# example sakes.
+		dataDir=/home/centos/zk/data
+		# the port at which the clients will connect
+		clientPort=2181
+		# the maximum number of client connections.
+		# increase this if you need to handle more clients
+		#maxClientCnxns=60
+		#
+		# Be sure to read the maintenance section of the
+		# administrator guide before turning on autopurge.
+		#
+		# http://zookeeper.apache.org/doc/current/zookeeperAdmin.html#sc_maintenance
+		#
+		# The number of snapshots to retain in dataDir
+		#autopurge.snapRetainCount=3
+		# Purge task interval in hours
+		# Set to "0" to disable auto purge feature
+		#autopurge.purgeInterval=1
+		
+		#2888:作为leader启用的端口
+		#3000:作为follower,推选leader时所用的口。
+		server.102=s102:2888:3888 
+		server.103=s103:2888:3888
+		server.104=s104:2888:3888
+
+	4.启动zk服务器
+		//s102
+		$>zkServer.sh start						//启动zk服务器
+		//s103
+		$>zkServer.sh start 
+		//s104
+		$>zkServer.sh start 
+
+		$>zkServer.sh status					//查看服务器状态
+		$>zkServer.sh stop						//停止
+
+	5.zkCli.sh客户端使用
+		$>zkCli.sh -server s102:2181
+		$zkCli>help								//查看帮助
+		$zkCli>ls /								//列出指定目录,tab可以补全
+		$zkCli>create /a helloworld				//创建节点，必须携带数据,必须逐级创建
+		$zkCli>create /a/b how					//控制光标，ctrl +a :行首 ctrl+e : 行尾
+		$zkCli>get /a							//查看节点状态
+		$zkCli>set /a howareyou ?				//修改数据
+		$zkCli>rmr /a							//递归删除节点
+		$zkCli>delete /a/b						//删除空节点，不能递归
+		$zkCli>quit								//退出cli
+		$zkCli>
+		$zkCli>ls /zookeeper		
+		
+	6.zk节点类型
+		6.1)持久类型
+			默认.
+
+		6.2)临时类型
+			只在当前回话期间有效，回话结束，临时节点删除。
+			临时节点不能有子节点。
+			$zkCli>create -e /a/b/b1 how		//-e:临时的
+
+		6.3)序列类型
+			创建节点时，使用-s参数指定序列节点，该节点名称
+			会自动附加10位的数字，并且数字递增。避免并发创建
+			节点时导致的冲突。
+
+
+	7.使用zk API访问zk集群
+		7.1)maven依赖
+			<?xml version="1.0" encoding="UTF-8"?>
+			<project xmlns="http://maven.apache.org/POM/4.0.0"
+					 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+					 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+				<modelVersion>4.0.0</modelVersion>
+
+				<groupId>com.it18zhang</groupId>
+				<artifactId>my-zk</artifactId>
+				<version>1.0-SNAPSHOT</version>
+
+				<dependencies>
+					<dependency>
+						<groupId>org.apache.zookeeper</groupId>
+						<artifactId>zookeeper</artifactId>
+						<version>3.4.9</version>
+					</dependency>
+					<dependency>
+						<groupId>junit</groupId>
+						<artifactId>junit</artifactId>
+						<version>4.11</version>
+					</dependency>
+				</dependencies>
+			</project>
+
+		7.2)编程
+			ACL
+			Access control list,访问控制列表,指权限。
+			package com.it18zhang.zk.test;
+
+			import org.apache.zookeeper.CreateMode;
+			import org.apache.zookeeper.ZooDefs;
+			import org.apache.zookeeper.ZooKeeper;
+			import org.junit.Test;
+
+			import java.io.IOException;
+			import java.util.List;
+
+			/**
+			 * Created by Administrator on 2018/1/15.
+			 */
+			public class TestZK {
+
+				/**
+				 * 获取孩子节点
+				 */
+				@Test
+				public void test1() throws Exception {
+					String conn = "s102:2181,s103:2181,s104:2181" ;
+					ZooKeeper zk = new ZooKeeper(conn,5000 , null) ;
+					List<String> list= zk.getChildren("/" , null);
+					for(String s: list){
+						System.out.println(s);
+					}
+					zk.close();
+				}
+
+				/**
+				 * 增加节点
+				 */
+				@Test
+				public void testCreate() throws Exception {
+					String conn = "s102:2181,s103:2181,s104:2181" ;
+					ZooKeeper zk = new ZooKeeper(conn,5000 , null) ;
+
+					String str = zk.create("/a/a1" , "helloworld".getBytes() , ZooDefs.Ids.OPEN_ACL_UNSAFE , CreateMode.PERSISTENT) ;
+					System.out.println(str);
+					zk.close();
+				}
+			}
+
+作业
+--------------
+	1.递归列出zk的所有目录.

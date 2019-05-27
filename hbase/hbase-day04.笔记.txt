@@ -1,0 +1,518 @@
+hbase
+---------------
+	全表扫描。
+	filter
+	rowFilter
+	familyFilter
+	QualifierFilter
+	ValueFilter
+	SingleColumnValueFilter
+	SingleColumnExcludeValueFilter
+	FilterList			//PASS_ALL | PASS_ONE
+	PageFilter
+	ColumnPaginationFilter
+
+	1.Scan 
+		StartKey
+		StopKey
+		原生扫描。
+		scan 'ns1:t1' , {RAW=>true , VERSIONS=>10}
+	
+	2.VERSIONS
+		最大版本数。
+		列族下的每个列最多存放多少个版本。
+	
+	3.TTL + MIN_VERSIONS
+		TTL : time to live,存活时间(秒数)
+	
+	4.KEEP_DELETED_CELLS
+		是否保留删除的cell
+	
+coprocesor
+------------------
+	1.Observer
+		ftcgvbhnj mk,
+		
+	2.Endpoint
+		类似于procedure.
+	
+编程添加协处理器
+--------------------
+	1.定义协处理器并打成jar包，部署到hbase集群的lib下。
+	2.编程
+		@Test
+		public void testNewCopro() throws Exception {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			//列族
+			HColumnDescriptor cd = new HColumnDescriptor("f1") ;
+
+			//表描述符
+			HTableDescriptor td = new HTableDescriptor(TableName.valueOf("ns1:t8")) ;
+			//添加协处理器
+			//关联指定区域的。
+			td.addCoprocessor("com.it18zhang.hbase.coprocessor.YourRegionObserver");
+			td.addFamily(cd) ;
+
+			Admin admin = conn.getAdmin();
+			admin.createTable(td);
+			conn.close();
+		}
+
+key的三级坐标
+----------------
+	rowid/f:col/timestamp=value
+
+	hbase:meta			//所有区域的信息。
+
+
+
+rowkey设计原则
+---------------
+	1.长度
+		最大长度64K,等长。建议不超过16字节。
+
+	2.散列
+		2.1)高位采用随机数进行散列
+
+	3.唯一性
+		特征值，反映唯一性的属性值。
+		经常访问的数据也做到key中。
+
+	4.salt
+		盐析， 加盐。
+		随机加盐			//充分分散，读不可预测。
+		哈希加盐			//读可预测。
+
+	5.粗细原则
+		宏观上，在集群层面上，数据尽量分散。
+		在区域内，数据尽量集中.
+
+
+
+hbase表设计
+-----------------
+	列族不易过多，不超过3个，通常是2个。
+	f1		//概要数据 
+	f2		//详细数据
+
+
+通话记录
+--------------------
+	时间 时长 主叫号码 被叫号码
+
+	100
+	00 - 99
+
+	xx: yyyy/mm + telNo(后4位)
+
+
+	tag				    主|被									f1				
+						 0|1
+-------------------------------------------------
+	xx,本地号码,通话时间,标记,对方号码,通话时长,
+
+
+
+			CallLog
+			------------------------------------------------------
+				f1											|	f2
+			------------------------------------------------------
+rowi		caller1,caller2|calltime,callDuration,calltag   |site,gps , signal
+
+
+CallLogs
+--------------------
+	1.创建表
+		
+	2.rowkey
+		//xx			:分区号，00~99,有callTime的年月和callNo1后四位构成。
+		//callNo		:本地号码 
+		//callTime		:通话时间,yyyyMMddHHmmss
+		//callTag		:通话标记，0-主叫 1-被叫
+		//callNo2		:对方号码
+		//callDuration	:通话时长
+		xx,callNo1,callTime,callTag,callNo2,callDuration
+
+	3.创建工具类
+		/**
+		 * 工具类
+		 */
+		public class CallLogUtil {
+
+			/**
+			 * 生成rowkey
+			 * XX,callNo1,callTime,callTag,callNo2,callDur
+			 * 07,1234,20170102030405,0,5678,120
+			 *
+			 */
+			public static String genRowkey(String callNo1,String callTime,int callTag, String callNo2 , int callDur){
+				StringBuilder buffer = new StringBuilder() ;
+				buffer.append(genRegionNo(callNo1, callTime));
+				buffer.append(",");
+				buffer.append(callNo1);
+				buffer.append(",");
+				buffer.append(callTime);
+				buffer.append(",");
+				buffer.append(callTag);
+				buffer.append(",");
+				buffer.append(callNo2);
+				buffer.append(",");
+				buffer.append(callDur);
+				return buffer.toString() ;
+			}
+
+			/**
+			 * 计算分区编号
+			 */
+			public static String genRegionNo(String callNo1, String callTime) {
+				//提取后四位电话号码
+				String last4 = callNo1.substring(callNo1.length() - 4) ;
+				//提取年月值
+				String yyyymm = callTime.substring(0, 6) ;
+
+				int phoneNo = Integer.parseInt(last4) ;
+				int date = Integer.parseInt(yyyymm) ;
+				return ((phoneNo ^ date) & Integer.MAX_VALUE % 100) + "" ;
+			}
+		}
+	4.创建协处理器
+		package com.it18zhang.hbase.coprocessor;
+
+		import com.it18zhang.hbase.calllogs.CallLogUtil;
+		import org.apache.hadoop.hbase.TableName;
+		import org.apache.hadoop.hbase.client.Durability;
+		import org.apache.hadoop.hbase.client.Put;
+		import org.apache.hadoop.hbase.client.Table;
+		import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
+		import org.apache.hadoop.hbase.coprocessor.ObserverContext;
+		import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+		import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
+		import org.apache.hadoop.hbase.util.Bytes;
+
+		import java.io.IOException;
+
+		/**
+		 *CallLogCoprocessor
+		 */
+		public class CallLogCoprocessor extends BaseRegionObserver {
+
+			//calllogs表名
+			private static final String CALLLOGS_TABLENAME = "ns1:calllogs" ;
+
+			private String currentTableName;
+
+			public void postOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
+				this.currentTableName = e.getEnvironment().getRegionInfo().getTable().getNameAsString();
+			}
+
+			public void postPut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, Durability durability) throws IOException {
+				super.postPut(e, put, edit, durability);
+				//判断是否是callLogs表
+				if(currentTableName.equals(CALLLOGS_TABLENAME)){
+					//rowkey
+					String oldkey = Bytes.toString(put.getRow()) ;
+					String[] arr = oldkey.split(",") ;
+					//主叫
+					if(arr[3].equals("0")){
+						String callNo1 = arr[1] ;
+						String callTime = arr[2] ;
+						String callTag = arr[3] ;
+						String callNo2 = arr[4] ;
+						String callDur = arr[5] ;
+
+						String newKey = CallLogUtil.genRowkey(callNo2, callTime,1 , callNo1, Integer.parseInt(callDur)) ;
+						Put newPut = new Put(Bytes.toBytes(newKey)) ;
+						newPut.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("refid"),Bytes.toBytes(oldkey)) ;
+						Table t = e.getEnvironment().getTable(TableName.valueOf(CALLLOGS_TABLENAME)) ;
+						t.put(newPut);
+						t.close();
+					}
+				}
+
+			}
+		}
+
+	5.导出jar包部署
+	
+	6.配置hbase-site.xml并分发
+		<configuration>
+				<property>
+						<name>hbase.rootdir</name>
+						<value>hdfs://mycluster/hbase</value>
+				</property>
+				<property>
+						<name>hbase.cluster.distributed</name>
+						<value>true</value>
+				</property>
+				<property>
+						<name>hbase.zookeeper.quorum</name>
+						<value>s102:2181,s103:2181,s104:2181</value>
+				</property>
+				<property>
+						<name>hbase.coprocessor.region.classes</name>
+						<value>com.it18zhang.hbase.coprocessor.CallLogCoprocessor</value>
+				</property>
+		</configuration>
+	7.重启hbase集群
+	
+	8.测试
+		/**
+		 * 插入数据
+		 */
+		@Test
+		public void testPut() throws Exception {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:calllogs"));
+			String callNo1 = "13800001234";
+			String callTime = "20170102030405";
+			int callTag = 0;
+			String callNo2 = "13800005678";
+			int callDur = 120;
+
+			String callerRowkey = CallLogUtil.genRowkey(callNo1, callTime, callTag, callNo2, callDur);
+
+			Put put = new Put(Bytes.toBytes(callerRowkey)) ;
+			put.addColumn(Bytes.toBytes("f1") ,Bytes.toBytes("callNo1") , Bytes.toBytes(callNo1)) ;
+			put.addColumn(Bytes.toBytes("f1") ,Bytes.toBytes("callTime") , Bytes.toBytes(callTime)) ;
+			put.addColumn(Bytes.toBytes("f1") ,Bytes.toBytes("callTag") , Bytes.toBytes(callTag)) ;
+			put.addColumn(Bytes.toBytes("f1") ,Bytes.toBytes("callNo2") , Bytes.toBytes(callNo2)) ;
+			put.addColumn(Bytes.toBytes("f1") ,Bytes.toBytes("callDur") , Bytes.toBytes(callDur)) ;
+			put.addColumn(Bytes.toBytes("f2") ,Bytes.toBytes("signal") , Bytes.toBytes("5")) ;
+
+			t.put(put);
+			t.close();
+			conn.close();
+		}
+	
+	9.查看hbase的数据
+
+
+改造项目，get/scan方法返回的被叫信息转换成主叫信息。
+---------------------------------------------------
+	0.工具类，格式化两位区域号。
+		/**
+		 * 计算分区编号
+		 */
+		public static String genRegionNo(String callNo1, String callTime) {
+			DecimalFormat df = new DecimalFormat("00") ;
+			//提取后四位电话号码
+			String last4 = callNo1.substring(callNo1.length() - 4) ;
+			//提取年月值
+			String yyyymm = callTime.substring(0, 6) ;
+
+			int phoneNo = Integer.parseInt(last4) ;
+			int date = Integer.parseInt(yyyymm) ;
+			int regNo = ((phoneNo ^ date) & Integer.MAX_VALUE % 100) ;
+			return df.format(regNo) ;
+		}
+
+	1.CallLogCoprocessor
+		package com.it18zhang.hbase.coprocessor;
+
+		import com.it18zhang.hbase.calllogs.CallLogUtil;
+		import org.apache.hadoop.hbase.Cell;
+		import org.apache.hadoop.hbase.TableName;
+		import org.apache.hadoop.hbase.client.*;
+		import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
+		import org.apache.hadoop.hbase.coprocessor.ObserverContext;
+		import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+		import org.apache.hadoop.hbase.regionserver.InternalScanner;
+		import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
+		import org.apache.hadoop.hbase.util.Bytes;
+
+		import java.io.IOException;
+		import java.util.ArrayList;
+		import java.util.List;
+
+		/**
+		 *CallLogCoprocessor
+		 */
+		public class CallLogCoprocessor extends BaseRegionObserver {
+
+			//calllogs表名
+			private static final String CALLLOGS_TABLENAME = "ns1:calllogs" ;
+
+			private String currentTableName;
+
+			public void postOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
+				this.currentTableName = e.getEnvironment().getRegionInfo().getTable().getNameAsString();
+			}
+
+			public void postPut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, Durability durability) throws IOException {
+				super.postPut(e, put, edit, durability);
+				//判断是否是callLogs表
+				if(currentTableName.equals(CALLLOGS_TABLENAME)){
+					//rowkey
+					String oldkey = Bytes.toString(put.getRow()) ;
+					String[] arr = oldkey.split(",") ;
+					//主叫
+					if(arr[3].equals("0")){
+						String callNo1 = arr[1] ;
+						String callTime = arr[2] ;
+						String callTag = arr[3] ;
+						String callNo2 = arr[4] ;
+						String callDur = arr[5] ;
+
+						String newKey = CallLogUtil.genRowkey(callNo2, callTime,1 , callNo1, Integer.parseInt(callDur)) ;
+						Put newPut = new Put(Bytes.toBytes(newKey)) ;
+						newPut.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("refid"),Bytes.toBytes(oldkey)) ;
+						Table t = e.getEnvironment().getTable(TableName.valueOf(CALLLOGS_TABLENAME)) ;
+						t.put(newPut);
+						t.close();
+					}
+				}
+			}
+
+			public void postGetOp(ObserverContext<RegionCoprocessorEnvironment> e, Get get, List<Cell> results) throws IOException {
+				super.postGetOp(e, get, results);
+				//判断是否是callLogs表
+				if (currentTableName.equals(CALLLOGS_TABLENAME)) {
+					//是否是主叫信息
+					String rowkey = Bytes.toString(get.getRow());
+					String[] arr = rowkey.split(",");
+					//被叫信息
+					if(arr[3].equals("1")){
+						Cell cell = results.get(0) ;
+						byte[] refidBytes = cell.getValue();
+
+						Get newGet= new Get(refidBytes) ;
+						Table t = e.getEnvironment().getTable(TableName.valueOf(CALLLOGS_TABLENAME)) ;
+						Result r = t.get(newGet);
+						results.clear();
+						results.addAll(r.listCells()) ;
+					}
+				}
+			}
+
+			public boolean postScannerNext(ObserverContext<RegionCoprocessorEnvironment> e, InternalScanner s, List<Result> results, int limit, boolean hasMore) throws IOException {
+				boolean b = super.postScannerNext(e, s, results, limit, hasMore);
+				Table t = e.getEnvironment().getTable(TableName.valueOf(CALLLOGS_TABLENAME));
+				//判断是否是callLogs表
+				if (currentTableName.equals(CALLLOGS_TABLENAME)) {
+					List<Result> myList = new ArrayList<Result>() ;
+					myList.addAll(results) ;
+					results.clear();
+					for(Result r : myList){
+						String rowkey = Bytes.toString(r.getRow()) ;
+						//主叫
+						if(rowkey.contains(",0,")){
+							results.add(r) ;
+						}
+						//被叫
+						else{
+							Get newGet = new Get(r.listCells().get(0).getValue());
+							Result rr = t.get(newGet);
+							results.add(rr) ;
+						}
+					}
+				}
+				t.close();
+				return b ;
+			}
+		}
+
+
+	2.导出jar重新部署
+	
+	3.执行查询
+		@Test
+		public void testRangeScan() throws Exception {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:calllogs"));
+			String callno = "13800001234" ;
+			String ym = "201702" ;
+			//区域号
+			String regionNo = CallLogUtil.genRegionNo(callno,ym);
+
+			Scan scan = new Scan() ;
+			//起始key
+			String startkey = regionNo + "," + callno + "," + ym ;
+			scan.setStartRow(Bytes.toBytes(startkey)) ;
+
+			//结束key
+			String stopkey = regionNo + "," + callno + ",201703";
+			scan.setStopRow(Bytes.toBytes(stopkey)) ;
+
+			Iterator<Result> it = t.getScanner(scan).iterator();
+			while(it.hasNext()){
+				printResult(it.next());
+			}
+			t.close();
+			conn.close();
+		}
+
+
+动态添加协处理器,不需要重启集群
+----------------------------------
+	1.编写协处理器
+	2.导出jar包
+	3.分布jar到每个hbase节点都能访问的目录
+		3.1)放置jar到hdfs目录
+			hdfs dfs -put my-hbase.jar hdfs://s105/user/centos/jars/myhbase.jar
+		
+		3.2)全分发jar到每个hbase节点。
+			xsync.sh
+
+	4.通过addCoprocessor方法动态添加协处理器
+		public void testNewCopro() throws Exception {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf);
+			//列族
+			HColumnDescriptor cd = new HColumnDescriptor("f1");
+
+			//表描述符
+			HTableDescriptor td = new HTableDescriptor(TableName.valueOf("ns1:t12"));
+			//添加协处理器
+			td.addCoprocessor("com.it18zhang.hbase.coprocessor.MyRegionObserver3",
+					new Path("hdfs://mycluster/user/centos/jars/myhbase000.jar"), Coprocessor.PRIORITY_USER, null);
+			td.addFamily(cd);
+
+			Admin admin = conn.getAdmin();
+			admin.createTable(td);
+			conn.close();
+		}
+	5.执行插入和scan
+		$hbase>put
+		$hbase>scan
+	
+随机提取时间点
+------------------------
+	/**
+	 *随机提取时间点
+	 */
+	public static String getRandTime(){
+		Random r = new Random() ;
+		try {
+			String start = "2017/01/01 00:00:00" ;
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss") ;
+			Date startDate = sdf.parse(start) ;
+			//毫秒数
+			long startMs = startDate.getTime();
+			//
+			long nowMs = new Date().getTime() ;
+
+			//时间差
+			long dur = nowMs - startMs ;
+			//
+			long randtime = startMs +(long)(r.nextDouble() * dur) ;
+
+			//
+			Date randDate = new Date(randtime) ;
+
+			SimpleDateFormat sdf2 = new SimpleDateFormat("yyyyMMddHHmmss");
+			return sdf.format(randDate);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return null ;
+	}
+
+实现一个方法
+------------------
+	1.按照时间段查询指定用户的通话记录
+		findLogs(String callNo1 , String startTime , String endTime){
+			..
+		}

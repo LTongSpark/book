@@ -1,0 +1,675 @@
+scala
+------------
+	java脚本化。
+	函数式编程。
+	开发效率高
+	procedure		//def xx(){}
+	function		//def xxx() = {}
+	类型推断
+	val				//常量
+	var				//变量
+
+while(){
+}
+
+for(x <- 1 to 10 if ..){
+	println(x) ;
+}
+
+数组
+---------------
+	//创建数组,长度10，Int是泛型。
+	val arr = new Array[Int](10)
+
+	//快速构建数组
+	val arr = Array(1,2,3)
+	val arr = Array.apply(1,2,3)
+
+	val arr = new Array[Int](3)
+	//访问特定元素，下标值
+	arr(0) = 1
+	arr(1) = 2
+	arr(2) = 3
+
+	//
+	val arr = Array(3)
+	val arr = new Array(3)
+
+变长数组(缓冲区)
+--------------
+	import scala.collection.mutable.ArrayBuffer
+	val buf = ArrayBuffer(1,2,3)
+	val buf = ArrayBuffer[Int]()
+
+	//=对自身的内容进行改变
+	buf.+=(1,2,3)
+
+	//++不改变自身，生成新对象
+	buf.++(1 to 10)
+
+	//++/--通常是操纵集合元素
+
+	//移除最后的n个元素,修改自身
+	buf.trimEnd(3)
+
+	//insert,在指定索引位置插入元素
+	buf.insert(n:Int , seq:Int*)
+	buf.insert(0,1)
+	buf.insert(0,2,3,4)
+
+	//从指定位置开始移除多少元素
+	buf.remove(0,2)						//移除开始的两个元素
+	buf.remove(0)						//移除第一个元素
+
+	
+	//遍历数组
+	for(x <- buf) println(x)
+
+	for(i <- 0 until buf.size) println(buf(0))
+
+	//反转元素位置,10 ...1
+	val x = (1 to 10).reverse
+
+	
+	//yield生成新集合
+	for(x <- buf) yield x / 2
+
+	//常用函数
+	buf.sum
+	buf.max
+	buf.min
+
+	//快速排序数组
+	val a = buf.toArray
+	scala.util.Sorting.quickSort(a)
+
+	//数组转换String
+	buf.mkString(",")
+	buf.mkString("[",",","]")			//修饰符，前缀，后缀，连接符。
+
+多维数组
+-----------
+	val arr = Array[Int]()
+	val arr = Array[Array[Int]]()
+
+	val arr = Array[Array[Int]](Array(1),Array(1,2),Array(1,2,3))
+
+	for(x <- arr){
+		for(y <- x){
+			print(y)
+		}
+		println()
+	}
+
+	//构造多维数组
+	val ma = Array.ofDim[Int](3,4)		//
+	ma(0)(1) = 5						//访问数组元素
+
+
+和java集合的互操作
+---------------------
+	//自动将java的list转换成scala buffer
+	def f1(list:java.util.List[String]) = println(list.size())
+	val alist = new java.util.ArrayList[String]()
+	alist.add("tom1")
+	alist.add("tom2")
+	alist.add("tom3")
+	f1(alist)				//3
+
+	f1(buf)					//wrong
+
+	//自动把Scala的buffer转换成java的list
+	def f2(buf:Buffer[String])= println(buf.size)
+	import scala.collection.JavaConversions.bufferAsJavaList
+	f1(buf)					//ok
+
+
+映射和元组
+----------------------
+	1.映射
+		Map,是对偶的集合。
+		val m = Map(1->"tom",2->"tomas")
+		val m = Map((1 , "tom"),(2,"tomas"),(3,"tomasLee"))
+		m(1)				//m.apply(1)
+		m(1) = "jerry"		//可以修改
+
+		for((k,v) <- m) println(k + "==>" + v)		//迭代元组
+
+	2.元组
+		n个信息的组成，等价一个记录。
+		类型可以不同。
+		val t = (1,"tom",12) ;
+		val t = new Tuple3[Int,String,Int](1,"tom",12)
+		t._1
+		t._2
+		t._3				//元组内容不能修改。
+
+	3.对偶
+		特殊的元组，只有两个元素。
+		val couple = (1,"tom")
+		val couple = 1 -> "tom"
+
+	4.map和java Map互操作
+		import scala.collection.JavaConversions.mapAsJavaMap
+		import scala.collection.JavaConversions.propertiesAsScalaMap
+	
+	5.拉链操作
+		将两个数组的元素一一组合，形成对偶的集合
+		val ids = Array(1,2,3)
+		val names = Array("tom1", "tom2" ,"tom3")
+		ids.zip(names)
+
+		//如果两边元素个数不同,-1:左侧集合的占位，nobody是右侧集合的占位。
+		ids.zipAll(names,-1,"nobody")
+
+		//zipWithIndex 元素和自己的索引构成couple
+		names.zipWithIndex()
+
+scala类
+--------------
+	//定义类
+	class Dog{
+		private var age:Int = 0 
+		def incre() = age += 1
+		def old() = age 
+	}
+
+	//实例化对象
+	val d = new Dog
+	d.<tab>
+
+	class Dog{
+		var age:Int = 0 ;
+		def incre() = {age += 1};
+		def old() = {age} ;
+	}
+
+	val d = new Dog()
+	//get
+	d.age
+	//set
+	d.age = 11
+
+scala字段生成方法的原则:
+-------------------------
+	1.字段private，get/set也是私有的
+	2.字段是val,只有get
+	3.如果不需要任何get/set,可以定位private[this]
+
+
+scala的private[this]
+-------------------------
+	只能在自己的对象中访问。
+	class Dog{
+	private[this] var age:Int = 0 ;
+	def setAge(n:Int) = {this.age = n} ;
+	def getAge() = this.age ;
+
+	//实现标注的get/set方法
+	@scala.beans.BeanProperty
+	var coler:String = "yellow"
+	
+	//错误的，因为age是private[this]
+	def compare(d:Dog)={
+	  this.age > d.age			
+	}
+	}
+
+辅助构造器
+-----------------------
+	//主构造(name:String,age:Int)
+	class Dog(name:String,age:Int,color:String , owner:String){
+		//辅助构造
+		def this()={
+			this("yellow" , 12)
+
+		}
+
+		def who() = owner ;
+	}
+
+	1.var生成get、set方法
+	2.val只对应get方法
+	3.缺失var和val，如果不参与计算，不会生成任何成员
+	4.缺失var和val，如果参与计算，升格为字段.
+
+
+对象(单例对象)
+-----------------------
+	scala没有静态之说，通过object进行实现。
+	object中定义的成员都是静态的。
+
+	//内部使用java的单例设计模式实现
+	Object Benz{
+		val brand:String= "BENZ"
+	}
+	//访问静态成员
+	Benz.brand
+
+伴生对象
+----------------------
+	和类同名的对象就是类的伴生对象。
+	class Benz{
+	  var color : String = "black"
+	}
+
+	object benz{
+	  val brand:String = "BENZ" 
+	}
+
+编写能执行scala程序
+--------------------
+	//编写scala入口类
+	[app.scala]
+	object App{
+	  def main(args:Array[String]) = {
+		println("hello world")
+	  }
+	}
+	//编译
+	scalac app.scala
+	//执行
+	scala app
+	//直接执行scala源代码
+	scala app.scala
+
+idea安装scala插件
+------------------
+	1.下载scala-intellij-bin for 2016.3.6.zip
+	2.settings ->plugins -> install plugin from disk ... ->定位到zip文件 ->install
+	3.重启idea即可.
+	4.验证
+
+
+trait
+-------------------
+	等价于java的接口。
+	scala对应第一个接口使用extends关键在，其他接口使用with
+	trait USB1{
+		def slot1() ;
+	}
+
+	trait USB2{
+		def slot2() ;
+	}
+
+	trait USB3{
+		def slot3() ;
+	}
+
+
+	class Mp3 extends USB1 with USB2 with USB3{
+		override def slot(): Unit = {
+			printf("~~~")
+		}
+
+		override def slot2(): Unit = {
+
+		}
+
+		override def slot3(): Unit = {
+			
+		}
+	}
+
+apply方法
+-----------------
+	apply方法定义在object中，为了快速构造对象.
+	/**
+	  * Created by Administrator on 2018/2/9.
+	  */
+	class Dog(var name:String,var age :Int) {
+
+	}
+
+	object Dog{
+		def apply(n:String,age:Int) = new Dog(n,age)
+	}
+
+
+	val d = new Dog("tom",12)
+	val d = Dog("tom",12)
+	val d = Dog.apply("tom",12)
+
+
+scala包和导入
+--------------------
+	1.定义包
+		//嵌套定义
+		package com{
+			packate xxxx ;
+		}
+
+		//串联定义
+		package com.xxx.
+	
+	2.别名
+		import java.util.{List => juList}
+		val l:juList[String ] = new java.util.ArrayList[String]()
+
+
+构造父类对象
+--------------------
+	//主构造
+	class Dog(var name:String,var age :Int) {
+	}
+
+	//继承,
+	class Jing8(var n:String , var a:Int , var color:String) extends Dog(n,a){
+
+	}
+
+	//抽象类
+	abstract class Aniaml{
+		//抽象方法
+		def cry() ;
+		//抽象字段
+		var age:Int
+
+	}
+
+scala类层级关系
+---------------------
+	Any
+	 ^
+	 |
+	 ---class AnyVal
+	 |			^
+	 |			|---- Byte
+	 |			|---- Int
+	 |			|---- Short
+	 |			|---- ...
+	 |			|---- Unit
+	 |
+	 |
+	 ---class AnyRef
+				^         
+				|---- Java Class
+				|---- Scala class 
+	 
+	 ---class Nothing
+	 ---class Null
+
+
+Null和null
+-------------------------------------
+	Null是类型，null是该类型唯一的一个值.
+	null不可以给anyValue类型变量赋值，可以给
+	AnyRef赋值。
+
+	val x : Null = null ;
+
+Nothing
+-------------------------------------
+	是类型，并且没有实例。常用于集合的泛型。
+	case object Nil extends List[Nothing]
+	Nil表示空集合。
+	Nothing可以理解为任何类型的子类型。
+	val x :List[Int] = Nil
+	val x :List[String] = Nil
+
+Unit
+------------------------------------
+	java中方法没有返回值的使用void类型。
+	scala中的unit相当于java的void.
+	Unit只有一个值,()
+	val x:Unit = ();
+
+
+
+文件与正则
+--------------
+	//读取文件
+	val it = scala.io.Source.fromFile("d:/java/1.txt").getLines()
+	for(x <- it){
+		println(x)
+	}
+
+	//二进制读取
+	val f:java.io.File = new File("d:\\java\\1.txt")
+	val fis = new FileInputStream(f)
+	val baos = new ByteArrayOutputStream()
+	val buf = new Array[Byte](f.length().toInt)
+	fis.read(buf)
+	fis.close()
+	println(new String(buf))
+
+	//?????缓冲流读取?????
+
+进程控制
+--------------
+	import sys.process._
+	//!返回的命令对执行结果,0或其他值。
+	val x:Int = ("dir d:/" !)
+
+	//!!返回字符串,x是执行的结果字符串
+	val x = ("dir d:/" !!)
+
+
+特质
+--------------
+	class RichInt extends OrderedProxy..
+
+	1.自身类型
+		限制自己可供哪些类使用。
+		/**
+		  * Created by Administrator on 2018/2/9.
+		  */
+		class Vip extends VipRoom{
+			override def tea(): Unit = {
+
+			}
+		}
+
+		//错误，不符合特质自身类型
+		class Customer extends VipRoom{
+			override def tea(): Unit = {
+
+			}
+		}
+
+		//vip房间
+		trait VipRoom {
+			//只能Vip能实现该特质。
+			this:Vip=>
+			def tea()
+		}
+
+操作符
+---------------
+	1.中置操作符
+		放在两个操作数的中间。
+		调用的对象的方法有一个参数。
+		可以使用中置操作符
+		1 to 10
+		1.to(10)
+
+		class Dog = {
+			def compare(d:Dog) = -1
+		}
+
+		val d1 = new Dog()
+		val d2 = new Dog()
+		d1.compare(d2)
+		d1 compare d2
+
+	2.一元操作符
+		//前置操作符
+		+		//+号
+		-		//-号
+		!		//boolean取反
+		~		//按位取反
+		
+		//将前置操作符转换成方法
+		0.unary_~
+		0.unary_+
+		0.unary_-
+		ttue.unary_!
+
+		//赋值操作符
+		var a = 0 
+		a +=
+		a -=
+		a *=
+		a /=
+        var x = 0
+        x -= 1
+        x *= 1
+        x /= 1
+        x %= 1
+
+
+	3.结合性
+		:结尾的都是右操作符。
+		val a = Array(1,2,3)
+
+		//4,1,2,3
+		a.+:(4)			//方法调用
+		4 +: a			//右操作符
+
+		val a = Array(1,2,3)
+		val b = Array(4,5,6)
+		a ++: b			//1,2,3,4,5,6
+
+		1 :: 2 :: 3 :: Nil			//1,2,3
+		Nil.::(3).::(2).::(1)		//1,2,3
+
+update和apply
+-------------------
+	val m = mutable.HashMap[String,Int]("tom1"->100 , "tom2"->80)
+	//apply
+	m("tom1")
+	m.apply("tom1")
+
+	//更新
+	m("tom2") = 300
+	m
+
+	//定义分数类和*方法
+	class Fraction(var top:Int,var bot:Int) {
+		def *(f:Fraction) = {
+			Fraction(top * f.top , bot * f.bot)
+		}
+
+	}
+
+	object Fraction{
+		def apply(a:Int,b:Int) = new Fraction(a,b)
+	}
+	//apply
+	val f1 = Fraction(1,2)
+	val f2 = Fraction(1,3)
+	//
+	val f3 = f1 * f2
+	val f4 = f1.*(f2)
+
+提取器:unapply
+------------------
+	和apply相反，反解析对象，抽泣属性值的。
+	class Fraction(var top:Int,var bot:Int) {
+		def *(f:Fraction) = {
+			Fraction(top * f.top , bot * f.bot)
+		}
+
+	}
+
+	object Fraction{
+		def apply(a:Int,b:Int) = new Fraction(a,b)
+
+		def unapply(arg: Fraction): Option[(Int, Int)] = {
+			if(arg.top == 0) None else Some(arg.top,arg.bot)
+		}
+	}
+
+	object demo1{
+		def main(args: Array[String]): Unit = {
+			val f1 = Fraction(1,2)
+			val f2 = Fraction(1,3)
+			val f3 = f1 * f2
+			//将f3的分子分母抽取出来，赋值给a1,b1
+			val Fraction(a1,b1) = f3
+		}
+	}
+
+_用法
+-----------------
+	import math._			//导包
+	1 to 10 :_*				//转序列
+	(1,2)._1				//元组访问
+	val f = ceil _			//函数本身
+
+
+高阶函数
+----------------
+	函数中的参数或者返回值也是函数。
+	import scala.math._
+	val x = 3.14
+	ceil(x)				//4.0
+	val f = ceil _		//
+	f(x)
+	
+	//
+	Array(1.1,2.2,3.3).map(f)
+
+	//匿名函数
+	(a:Int,b:Int)=>a + b
+	val f = (a:Int,b:Int)=>a + b
+	f(1,2)							//调用函数
+
+	//定义高阶函数
+	def op(f:(Int,Int)=>Int,a:Int,b:Int) = f(a,b)
+	def add(a:Int,b:Int) = a + b
+	val f = add _
+	op(f,1,2)
+	op(add _ , 1,2)
+	op(add, 1,2)
+	op((a:Int,b:Int)=> a + b, 1,2)
+
+
+	//1.高阶函数，返回值是函数
+	def f0() = {
+		def add(a:Int,b:Int) = a + b
+		add _
+	}
+	f0()(1,2)
+
+	//2.高阶函数，返回值是函数
+	def f0() = { (a:Int,b:Int) => a + b }
+	f0()(1,2)
+
+	//3.
+	def f0():(Int,Int)=>Int = { (a:Int,b:Int) => a + b }
+
+	注意事项:
+	函数声明:没有参数名称，只需要有类型即可。(Int,Int)=>Int
+	匿名函数:有参数名称, (a:Int , b:Int) => a + b 
+						 (a:Int , b:Int) =>{ a + b }:Int
+	
+	//函数示例
+	val a = Array(1,2,3)			//1,2,3
+	a.map((x:Int)=>x * 3)			//3,6,9
+	a.map((x)=>x * 3)				//类型推断,省去了参数类型
+	a.map(x=>x * 3)					//省去了()
+	a.map(_ * 3)					//省去了()
+
+
+
+练习
+----------------------
+	y = ax + b
+
+	a : f1(a,b)
+
+	ff(f1,a,b,f2,c,d) = 
+
+	ff(f1,1,2 , f2,3,4) = 
+
+	def fline(f1:(Int,Int)=>Int , a:Int,b:Int, f2:(Int,Int)=>Int , c : Int,d:Int):Int=>Int = {
+		val x = f1(a,b) ;
+		val y = f2(c,d) ;
+
+		def fff(xxx:Int) = x * xxx + y
+		fff _
+	}
+
+	fline((a:Int,b:Int)=> a + b , 1,2 ,(a:Int,b:Int)=>a - b,3,4)(5)

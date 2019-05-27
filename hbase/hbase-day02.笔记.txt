@@ -1,0 +1,505 @@
+hbase
+------------------
+	面向列(族)的数据库。
+	随机定位和实时读写。
+	bigtable技术，
+	NoSQL(Not only SQL , 非关系型数据库，KV方式存储,检索速度)
+	Key三级坐标(rowid/f1:col/version)
+	构建在hadoop之上。
+	依赖于zk。
+
+	HMaster
+	HRegionServer
+
+hbase基本概念
+------------------
+	1.namespace
+		名字空间，对应hadoop的目录。
+	2.Table
+		表，对应hadoop的目录，是namespace子目录
+	
+	3.Region
+		区域，对应hadoop的目录，是table子目录
+	4.family
+		列族，对应hadoop的目录，是区域的子目录
+	
+	5.列
+
+Hbase API
+-----------------
+	[namespace]
+	$hbase>create_namespace 'ns1' 
+	$hbase>list_namespace 
+	$hbase>drop_namespace
+
+	[DDL]
+	$hbase>create 'ns1:t1' , 'f1','f2'
+	$hbase>drop 'ns1:t1'
+	$hbase>disable 'ns1:t1'
+
+
+Hbase脚本
+------------------
+	[start]
+	start-hbase.sh
+	hbase-daemon.sh start master					//启动master
+	hbase-daemon.sh start regionserver
+	hbase-daemon.sh restart regionserver
+	hbase-daemons.sh start regionserver				//启动所有regionserver
+
+	[stop]
+	stop-hbase.sh
+	hbase-daemon.sh stop master
+	hbase-daemon.sh stop regionserver
+	hbase-daemons.sh stop regionserver				//停止所有regionserver
+
+hbase master本省就是HA模式
+--------------------
+	在任何一台安装了hbase软件包的节点上直接启动master进程。
+
+
+hbase架构
+-------------------
+	1.hmaster
+
+	2.hbaseregionserver
+		每台regionserver都有一个hlog(WAL,write ahead log,写前日志)，数据写入到hbase之前
+		先写入wal，目的是为了容错。
+
+	3.HRegion
+		每个regionserver有多个region，每个region和表的区域对应。
+	
+	4.Store
+		Store和列族对应，每个region可有含有多个store。
+		每个store都有memstore，内存出。
+
+	5.StoreFile
+		对应存储文件，每个Store含有多个存储文件。
+	
+	6.HFile
+		是StoreFile使用的用来交互底层HDFS系统的工具类。
+
+系统表
+-------------------
+	1.hbase:meta
+		hbase元数据表，最重要的表，存放的所有表对应的区域信息。
+		region : startkey ,endKey,server
+
+	2.hbase:namespace
+		空间表，存放hbase数据中所有的namespace。
+
+	put 'ns:t1' , 'row7' , ... --> meta                       -> regionserver
+								->zk/hbase/metaregionserver -> 
+	row3
+	row7
+	row100
+	row8
+
+区域的管理
+------------------
+	1.切割
+		$hbase>split 'ns1:t1' , 'row500'											//切割表
+		
+	2.移动区域
+		$hbase>move 'e5a5f777021ccbb84b810769619d90a4'								//随机选择
+		$hbase>move 'e5a5f777021ccbb84b810769619d90a4', 's103,16020,1516668624752'	//指定目标主机
+		
+	3.合并区域
+		$hbase>merge_region '21e14e8d74828c1ec300d03393d7cf24' , 'e5a5f777021ccbb84b810769619d90a4' 
+
+	4.预切割
+		创建表的时候，预先切割区域。
+		$hbase>create 'ns1:t2' , 'f1' ,SPLITS=>['row1000','row2000']
+
+put操作
+------------------
+	hbase的客户端有buffer，默认是2m，存放put等mutation对象。
+	put对象都会先转换成list，校验通过后添加进缓冲区(writeAsyncBuffer,ConcurrentLinkedQueue)。
+	如果写入缓冲区的数据量超过2m(hbase.client.write.buffe可进行调整),开始后天清理缓冲器，提交
+	数据。
+	客户端缓冲区清理模式是自动清理的，意味着每次动作都执行清理工作。性能较差。
+	client底层提交动作通过线程池实现，将put等mutation封装成Runnable，submit给线程池,
+	串行化过程使用google pb协议指定。
+
+RPC
+--------
+	remote procedure call,远程过程调用
+
+IPC
+--------
+	inter process communication,进程间通信
+
+
+hbase写入优化处理
+--------------------
+	1.关闭client的缓冲区自动清理.
+		HTabble.setAutoFlushTo(false) ;
+
+		关闭前					关闭后					结果
+		19,734,418,130ns		1,479,510,720			20倍
+	2.关闭HLog
+		put.setDurability(Durability.SKIP_WAL);
+
+		关闭前					关闭后					结果
+		1,479,510,720			0,816,440,522			2倍
+		
+	3.预切割表，手动整理区域分布，开启多线程，每个线程插入的数据对应单独regionserver
+		10,000,000万数据写入耗时 : 582,952,925,973		1分钟.
+
+		/**
+		 *
+		 * @throws Exception
+		 */
+		@Test
+		public void testBatchPut() throws Exception {
+			Configuration conf = HBaseConfiguration.create();
+			Connection conn = ConnectionFactory.createConnection(conf) ;
+			HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t1"));
+			t.setAutoFlushTo(false);
+			DecimalFormat df = new DecimalFormat("0000") ;
+
+			long start = System.nanoTime();
+			for(int i = 0 ; i < 10000 ; i ++){
+				Put put = new Put(Bytes.toBytes("row" + df.format(i)));
+				//关闭写前日志
+				put.setDurability(Durability.SKIP_WAL);
+				put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("id"),Bytes.toBytes(i)) ;
+				put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("name"),Bytes.toBytes("tom" + i)) ;
+				put.addColumn(Bytes.toBytes("f1"),Bytes.toBytes("age"),Bytes.toBytes( i % 100)) ;
+				t.put(put);
+			}
+			t.close();
+			conn.close();
+			System.out.println(System.nanoTime() - start);
+		}
+
+		@Test
+		public void testMulti() throws Exception {
+			long start = System.nanoTime();
+			Thread t1= new Thread(){
+				public void run() {
+					doBatchPutMulti(0 , 3000000) ;
+				}
+			};
+			Thread t2= new Thread(){
+				public void run() {
+					doBatchPutMulti(3000000 , 6000000);
+				}
+			};
+			Thread t3= new Thread(){
+				public void run() {
+					doBatchPutMulti( 6000000 , 10000000);
+				}
+			};
+			t1.start();
+			t2.start();
+			t3.start();
+
+			t1.join();
+			t2.join();
+			t3.join();
+
+			System.out.println(System.nanoTime() - start);
+		}
+
+		/**
+		 *多线程 + 预切割 + 关闭WAL + 关闭缓冲区自动清理
+		 */
+		private void doBatchPutMulti(int startKey , int endKey)  {
+			try {
+				Configuration conf = HBaseConfiguration.create();
+				Connection conn = ConnectionFactory.createConnection(conf);
+				HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t1"));
+				t.setAutoFlushTo(false);
+				DecimalFormat df = new DecimalFormat("0000000");
+
+				for (int i = startKey; i < endKey; i++) {
+					Put put = new Put(Bytes.toBytes("row" + df.format(i)));
+					//关闭写前日志
+					put.setDurability(Durability.SKIP_WAL);
+					put.addColumn(Bytes.toBytes("f1"), Bytes.toBytes("id"), Bytes.toBytes(i));
+					put.addColumn(Bytes.toBytes("f1"), Bytes.toBytes("name"), Bytes.toBytes("tom" + i));
+					put.addColumn(Bytes.toBytes("f1"), Bytes.toBytes("age"), Bytes.toBytes(i % 100));
+					t.put(put);
+				}
+				t.close();
+				conn.close();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+
+HBase File
+-------------------
+	1.根级文件
+		..
+	2.表级文件
+		/hbase/data/ns1/t1/.tabledesc/.tableinfo.0000000001
+		有关表的描述信息。
+
+	3.区域级文件
+		/hbase/data/ns1/t1/0bf1c68f0190a6bf7e210adc53c01f90/.regioninfo
+		主要是startKey和endKey
+
+region的切割
+-------------------
+	自动切割。
+	切割风暴。
+	手动切割方式将该值设置较大一个值。
+	hbase.hregion.max.filesize=10737418240(10G)
+
+	//不需要编码区域名
+	split 'region_name' , 'rowkey'
+
+
+hbase命令
+---------------------
+  shell           Run the HBase shell
+  hbck            Run the hbase 'fsck' tool
+  snapshot        Create a new snapshot of a table
+  snapshotinfo    Tool for dumping snapshot information
+  wal             Write-ahead-log analyzer
+  hfile           Store file analyzer
+  zkcli           Run the ZooKeeper shell
+  upgrade         Upgrade hbase
+  master          Run an HBase HMaster node
+  regionserver    Run an HBase HRegionServer node
+  zookeeper       Run a Zookeeper server
+  rest            Run an HBase REST server
+  thrift          Run the HBase Thrift server
+  thrift2         Run the HBase Thrift2 server
+  clean           Run the HBase clean up script
+  classpath       Dump hbase CLASSPATH
+  mapredcp        Dump CLASSPATH entries required by mapreduce
+  pe              Run PerformanceEvaluation
+  ltt             Run LoadTestTool
+  version         Print the version
+  CLASSNAME       Run the class named CLASSNAME
+
+  hbase hfile分析存储文件。
+
+  hbase hfile -a -b -e -f /hbase/data/ns1/t2/1a9b3c5962370727969ce808b86452f3/f1/7881363218c14d64ac29a1f7e6d5eb4f -h -p
+
+merge
+---------------------
+	将两个区域合并成一个区域。
+	merge_region 'ENCODED_REGIONNAME', 'ENCODED_REGIONNAME' [,true]
+
+
+Cell
+---------------------
+	hbase的存储单元，由以下字段构成:
+	* 1) row					//rowkey
+	* 2) column family			//列族
+	* 3) column qualifier		//列
+	* 4) timestamp				//时间戳
+	* 5) type					//类型
+	* 6) MVCC version			//multiple version concurrent control 
+	* 7) value					//值
+
+
+Result
+---------------------
+	对应的一行，包含所有列族。
+
+
+hbaseScan
+---------------------
+	全表扫描
+	scan.setStartKey()		//包含start
+	scan.setStopKey()		//不含stop
+	scan.addFamily()		//只查询指定列族数据
+
+	//控制客户端扫描周期
+	conf.set("hbase.client.scanner.timeout.period" , "1");
+	//控制重试次数
+	conf.set("hbase.client.retries.number" , "1");
+	
+	[Cache] 
+	默认每次调用next()，都和服务器发生一次rpc交互。
+	可以使用缓存开启服务器一次回传记录的行数。
+	该功能默认是关闭的。
+	hbase.client.scanner.caching=2000
+	scan.setCaching(21000) ;
+
+	[5000000数据的扫描]
+	caching				time
+	-1					18,781,104,623
+	1					
+	2000				21,717,177,332
+	5000				15,753,569,511
+	10000				15,168,157,007
+	100000				15,157,655,379
+	MAX					15,214,267,944
+
+	[Batch]
+	批处理。
+	将一行数据分成多个批次回传。
+	scan.setBatch(2);
+
+	/**
+	 * 测试扫描,
+	 * scan切忌使用全表扫描
+	 */
+	@Test
+	public void testCaching() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t1"));
+		Scan scan = new Scan();
+		scan.setCaching(Integer.MAX_VALUE) ;
+		scan.setBatch(2) ;
+		System.out.println(scan.getCaching());
+		scan.setStartRow(Bytes.toBytes("row4"));
+		scan.setStopRow(Bytes.toBytes("row9"));
+
+		//返回游标
+		ResultScanner rs = t.getScanner(scan);
+
+		Iterator<Result> it = rs.iterator();
+		long start = System.nanoTime();
+		while (it.hasNext()) {
+			Result r = it.next();
+		}
+		t.close();
+		conn.close();
+		System.out.println(System.nanoTime() - start);
+	}
+
+	/**
+	 * 测试扫描,
+	 * scan切忌使用全表扫描
+	 */
+	@Test
+	public void testBatch() throws IOException {
+		Configuration conf = HBaseConfiguration.create();
+		Connection conn = ConnectionFactory.createConnection(conf);
+		HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:t4"));
+		Scan scan = new Scan();
+		scan.setBatch(2) ;
+		scan.setCaching(2);
+
+		//返回游标
+		ResultScanner rs = t.getScanner(scan);
+
+		Iterator<Result> it = rs.iterator();
+		long start = System.nanoTime();
+		while (it.hasNext()) {
+			Result r = it.next();
+			System.out.println("=====================");
+			outResult(r);
+		}
+		t.close();
+		conn.close();
+		System.out.println(System.nanoTime() - start);
+	}
+	
+	
+	public void testRangeScan() throws IOException {
+        Configuration conf = HBaseConfiguration.create();
+        Connection conn = ConnectionFactory.createConnection(conf);
+        HTable t = (HTable) conn.getTable(TableName.valueOf("ns1:calllogs"));
+        String callno = "13800005555";
+        String ym = "201702";
+        //区域号
+        String regionNo = CallLogUtil.genRegionNo(callno ,ym) ;
+
+        Scan scan = new Scan() ;
+
+        //起始key
+        String startKey = regionNo +  "," + callno + "," + ym ;
+        scan.setStartRow(Bytes.toBytes(startKey)) ;
+
+        //结束key
+        String stopKey = regionNo + "," + callno + ",201711" ;
+        scan.setStopRow(Bytes.toBytes(stopKey)) ;
+        Iterator<Result> it = t.getScanner(scan).iterator();
+        while (it.hasNext()){
+            outResult(it.next());
+        }
+        t.close();
+        conn.close();
+    }
+
+    /**
+     * Result相当于一行
+     */
+    private void outResult(Result r) {
+        try {
+            List<Cell> list = r.listCells();
+            for (Cell cell : list) {
+                String rowid = Bytes.toString(CellUtil.cloneRow(cell));
+                String f = Bytes.toString(CellUtil.cloneFamily(cell));
+                String c = Bytes.toString(CellUtil.cloneQualifier(cell));
+                long ts = cell.getTimestamp();
+                String value = Bytes.toString(CellUtil.cloneValue(cell));
+                System.out.printf("%s/%s:%s/%d=%s\r\n", rowid, f, c, ts, value);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+	
+	
+
+hive的json串解析
+--------------------
+	1.引入依赖
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-hive</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.hive</groupId>
+					<artifactId>hive-jdbc</artifactId>
+					<version>2.1.0</version>
+				</dependency>
+				<dependency>
+					<groupId>org.apache.hive</groupId>
+					<artifactId>hive-exec</artifactId>
+					<version>2.1.0</version>
+				</dependency>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+				<dependency>
+					<groupId>com.alibaba</groupId>
+					<artifactId>fastjson</artifactId>
+					<version>1.2.24</version>
+				</dependency>
+			</dependencies>
+		</project>
+	2.编写TaggenUDF函数
+		package com.it18zhang.hive.udf;
+
+		import org.apache.hadoop.hive.ql.exec.UDF;
+
+		import java.util.List;
+
+		/**
+		 *
+		 */
+		public class TaggenUDF extends UDF {
+
+			public List<String> evaluate(String json) {
+				return JSONUtil.parseTag(json) ;
+			}
+		}
+
+	3.导出jar包部署到centos
+		
+	4.启动yarn集群，进入hive的命令行
+		
+	5.

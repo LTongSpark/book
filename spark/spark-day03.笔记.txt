@@ -1,0 +1,206 @@
+spark job提交流程[local]
+------------------------
+
+
+并发度 : 
+-------------
+	最大并发度，等价于切片数(分区数)
+	sc.textFile("",10) ;
+
+	
+并发能力
+-------------
+	并行线程数决定。
+	conf.setMaster("local[4]")
+
+
+spark的textFile()默认并发度计算
+------------------------------
+	1.sc.textFile(,,)
+		def defaultMinPartitions: Int = math.min(defaultParallelism, 2)
+
+	2.sc.parallelize(1 to 10,3)
+		defaultParallelism = scheduler.conf.getInt("spark.default.parallelism", totalCores)
+
+
+后台调度器的创建时间
+----------------------
+	sc.createTaskScheduler()
+		-->new LocalSchedulerBackend()
+
+再分区
+-----------------------
+	shuffle动作可以重新指定分区。
+	reduceByKey(f, n) ;
+	groupByKey(n) ;
+
+map变换的操作
+---------------------
+	1.mapPartitions
+        //映射分区
+        val rdd1 = sc.parallelize(1 to 10 , 2)
+        val rdd2 = rdd1.mapPartitions(it => {
+            println("start")
+            var list:List[Int] = Nil
+            for(e <- it){
+                list = (e * 2)::list
+            }
+            println("end")
+            list.iterator
+        } )
+
+		//数据入库问题,可以使用forEachPartition
+        val  rdd2 = rdd1.mapPartitions(it=>{
+            Class.forName("com.mysql.jdbc.Driver")
+            val url = "jdbc:mysql://localhost:3306/big9"
+            val user = "root"
+            val pass = "root"
+            val conn = DriverManager.getConnection(url,user,pass)
+            conn.setAutoCommit(false);
+            val sql ="insert into tt(id) values(?)" ;
+            val ppst = conn.prepareStatement(sql)
+            for(e <- it){
+                ppst.setInt(1, e)
+                ppst.executeUpdate()
+            }
+            conn.commit()
+            it
+        })
+
+	2.union
+		联合的分区数是父RDD的分区数总和.
+		rdd1.union(rdd2) ;
+
+	3.intersection
+		交集,需要shuffle。采用协分组。
+        val rdd3 = rdd1.intersection(rdd2,4)
+        println(rdd3.getNumPartitions)
+        val rdd4 = rdd3.mapPartitionsWithIndex((n,it)=>{
+            for(e <- it){
+                println(n + " : " + e)
+            }
+            it
+        })
+
+	4.distinct
+		去重，内部通过reduceByKey实现。
+		map(x => (x, null)).reduceByKey((x, y) => x, numPartitions).map(_._1)
+
+	5.groupByKey
+		需要shuffle。
+		val rdd3 = rdd1.map(e=>{
+            (if(e%2==0) "even" else "odd" , e)
+        })
+        val rdd4 = rdd3.groupByKey(4);
+	
+	6.reduceByKey()
+		可以指定分区数。
+
+
+	7.aggregateByKey
+		按key聚合,
+		zeroU是初始值。
+		该函数现在分区内进行预聚合，使用函数f1.
+		分区间聚合使用f2函数。
+
+        val zeroU = "X"
+        def f1(a:String,b:Int) :String = a + "(f1)" + b
+        def f2(a:String,b:String) = a + "(f2)" + b
+        val rdd4 = rdd3.aggregateByKey(zeroU)(f1,f2)
+
+	8.join
+		leftOuterJoin
+		rightOuterJoin
+		fullOuterJoin
+	
+	9.cogroup
+		协分组.
+		对当前的rdd和传递的rdd参数进行联合分组，将相同的key的v组合成元组.
+		rdd1.cogroup(rdd2)
+		(K, (List[V1],List[V2]))
+
+	10.groupByKey
+		对当前的rdd进行按key分组。
+
+	11.cartesian
+		不需要shuffle.
+		for (x <- rdd1.iterator(currSplit.s1, context);
+			 y <- rdd2.iterator(currSplit.s2, context)) yield (x, y)
+
+	12.coalesce
+		再分区。
+		推荐不进行shuffle来降低分区数，产生新的rdd。
+		如果增加分区数，必须shuffle=true，否则无法实现增加目的。
+
+	13.repartition
+		恒使用shuffle操作，对于减少分区的动作，推荐使用coalesce.
+		coalesce(numPartitions, shuffle = true)
+
+	14.repartitionAndSortWithinPartitions
+		分区带排序
+		rdd1.repartitionAndSortWithinPartitions(new HashPartitioner(3))
+	
+groupByKey和reduceByKey
+------------------------
+	groupByKey不会进行map端combine操作。
+	reduceByKey()默认进行map端combine操作，减少网络负载。
+
+
+
+练习
+--------------------
+	1.使用aggregateByKey函数实现groupByKey功能，将所有v放入到集合List中.
+		val zeroU:List[Int] = Nil
+		def f1(a:List[Int] , b:Int) = b :: a 
+		def f2(a:List[Int],b:List[Int]) = a ++ b
+
+	2.准备cust.txt和orders.txt,
+		使用spark实现如下计算
+		2.1)查询每个客户的订单编号集合 
+			集合形式:(1,tomas,List(No001,No002))
+		2.2)查询每个客户订单价格的总和
+			集合形式:(1,tomas,300.4)
+		2.3)查询没有订单的客户
+			
+
+		import org.apache.spark.{SparkConf, SparkContext}
+
+		/**
+		  * Created by Administrator on 2018/3/2.
+		  */
+		object SimpleApp3 {
+			case class Customer(id:Int,name:String,age:Int)
+			case class Order(id:Int,orderno:String,price:Float,cid:Int)
+			def main(args: Array[String]): Unit = {
+				val conf = new SparkConf()
+				conf.setAppName("app")
+				conf.setMaster("local[3]")
+
+				val sc = new SparkContext(conf)
+
+				val crdd1 = sc.textFile("file:///d:/java/custs.txt")
+				val ordd1 = sc.textFile("file:///d:/java/orders.txt")
+
+				val crdd2 = crdd1.map(e=>{
+					val arr = e.split(",")
+					(arr(0).toInt , Customer(arr(0).toInt ,arr(1),arr(2).toInt))
+				})
+
+				val ordd2 = ordd1.map(e=>{
+					val arr = e.split(",")
+					(arr(3).toInt, Order(arr(0).toInt, arr(1), arr(2).toFloat , arr(3).toInt))
+				})
+
+				//连接
+				val ardd1 = crdd2.join(ordd2)
+					.map(t=>(t._2._1,t._2._2.orderno))
+					.groupByKey().map(t=>(t._1.id,t._1.name,t._2.toList))
+
+				//ordd2.foreach(println)
+				ardd1.foreach(println)
+				while(true){
+					Thread.sleep(1000)
+				}
+			}
+		}
+

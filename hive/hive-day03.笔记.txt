@@ -1,0 +1,220 @@
+排序
+--------------
+	order by
+	sort by						//reduce端排序
+	distribute by				//分区
+	cluster by					//distribute by a sort by a ;
+
+
+hive
+--------------
+	grouping sets(,,,,)			//group by + union ...
+								//1次job
+
+	rollup						//group by a,b,c grouping sets((a,b,c),(a,b),(a),())
+								//group b a,b,c whit rollup
+
+	cube						//group by a,b,c grouping sets((a,b,c),(a,b),(a,c),(b,c) , (a),(b),(c),())
+								//group b a,b,c whit cube
+
+分析函数
+---------------
+	max min avg count sum
+	rank()						//有缝排名
+	dense_rank					//无缝排名
+	percent_rank				//百分比排名
+	NTILE
+	LEAD
+	LAG
+	ROW_NUMBER
+	//对值开窗
+	select SUM(salary) OVER(PARTITION BY dept_num ORDER BY dept_num RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) from ... ;
+	select SUM(salary) OVER(PARTITION BY dept_num ORDER BY dept_num RANGE BETWEEN UNBOUNDED PRECEDING AND current row) from ... ;
+	select SUM(salary) OVER(PARTITION BY dept_num ORDER BY dept_num RANGE BETWEEN UNBOUNDED PRECEDING AND 3 following) from ... ;
+	//对行开窗
+	select SUM(salary) OVER(PARTITION BY dept_num ORDER BY dept_num ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) from ... ;
+
+
+create table
+------------------
+	CREATE external TABLE orders
+	(
+	id int,
+	orderno string,
+	price float,
+	cid int
+	)
+	ROW FORMAT DELIMITED
+	FIELDS TERMINATED BY ','
+	LINES TERMINATED BY '\n'
+	STORED AS TEXTFILE;
+
+
+采样
+------------------
+	加速大量数据的分析过程。
+	1.random sampling
+		随机采样.
+		和distribute + sort配合。
+		SELECT * FROM <Table_Name> DISTRIBUTE BY RAND() SORT BY RAND() LIMIT <N rows to sample>;
+		SELECT * FROM orders DISTRIBUTE BY RAND() SORT BY RAND() LIMIT 5;
+		create table res1 SELECT * FROM orders DISTRIBUTE BY cid SORT BY RAND() LIMIT 5;
+
+	2.bucket table sampling
+		桶表采样
+		针对桶表进行采样。
+
+		--执行多条记录插入
+		insert into buck(id,name,age) values(4,'tom4',14),(5,'tom5',15),(6,'tom6',16),(7,'tom7',17),(8,'tom8',18) ;
+
+		--语法:
+		SELECT * FROM <Table_Name> TABLESAMPLE(BUCKET <specified bucket number to sample> OUT OF <total number of buckets> ON [colname|RAND()]) table_alias;
+
+		--案例
+		create table res5 as SELECT name FROM buck TABLESAMPLE(BUCKET 1 OUT OF 3 ON rand()) a;
+		SELECT name FROM buck TABLESAMPLE(BUCKET 1 OUT OF 2 ON id) a;
+
+	3.block sampling
+		数据块采样
+		从数据块采样，可以采样百分比，指定行数，或者字节数。
+		--语法
+		SELECT * FROM <Table_Name> TABLESAMPLE(N PERCENT|ByteLengthLiteral|N ROWS) s;
+		
+		--使用
+		SELECT * FROM orders TABLESAMPLE(4 ROWS) s;
+		SELECT * FROM orders TABLESAMPLE(50 PERCENT) s;
+
+调优工具
+----------------
+	1.explain
+		语句解释器.
+		显式语句对应的mr过程。
+
+		explain select * from orders ;
+		explain select cid, count(*) cnt from orders group by cid order by cnt desc ;
+		explain extended select cid, count(*) cnt from orders group by cid order by cnt desc ;
+		explain formatted select cid, count(*) cnt from orders group by cid order by cnt desc ;
+
+	2.分析表
+		--分析表统计信息，执行完成后，统计信息写入元数据。
+		ANALYZE TABLE employee COMPUTE STATISTICS;
+
+		--通过desc查看表统计信息
+		desc [formatted] orders ;
+		desc [extended] orders ;
+
+	3.3级job分析
+		explain extended select a.id,a.name,count(*) cnt from custs a left outer join orders b on a.id = b.cid group by a.id order by cnt desc ;
+	
+
+hive优化
+-------------
+	1.index
+		索引对应是索引表。计算字段和字段的偏移量。
+		--创建索引
+		CREATE INDEX idx_orders_orderno
+		ON TABLE orders (orderno)
+		AS 'COMPACT' WITH DEFERRED REBUILD;
+
+		--生成索引
+		ALTER INDEX idx_orders_orderno ON orders REBUILD;
+
+	2.文件格式
+		行式存储和列式存储。
+		如果进行进行大量数据投影查询，优先考虑使用列式存储，发挥磁盘的线性读写。
+		2.1)textfile
+		2.2)sequencefile
+		2.3)rcfile
+			Record Columnar File
+			列式文件，对行进行水平切割形成行组。一个或几个组存在一个hdfs文件中。
+			以列的方式存放组中的所有列，依次是第一列、第二列、以此类推。
+			该格式可切割，可跳跃，速度更快，成本更低。
+			在元数据库中存放数据类型。
+			
+			--创建rcfile文件
+			create table rcfile1(id int , name string, age int) row format delimited stored as rcfile ;
+
+			--通过查询其他表实现数据转储
+			insert into rcfile1 select * from custs ;
+
+			--通过CTAS模式实现格式转换
+			create table rcfile2 stored as rcfile as select * from custs ;
+
+			--win7通过命令行下载rcfile文件
+			hdfs dfs -get hdfs://s101/user/hive/warehouse/mydb.db/rcfiel1/000000_0 
+
+
+		2.4)orc
+			Optimized Row Columnar.
+			优化的列存储格式。
+			>Hive 0.11.0可用。
+			RCFile的升级版。
+			支持256M的块，而RCFile是4M的块，sequence是1M的块。
+			使用特殊的编码器感知数据类型以便用于压缩优化。
+			存放了基本的统计信息，还有轻量级索引可以进行跳跃。
+			只有hive和pig支持。
+
+			--创建orc文件
+			create table orc1 stored as orc as select * from custs ;
+
+		2.5)parquet
+			和orc类似，
+			hadoop生态圈的大部分项目都支持该格式。
+			使用google dremel技术，支持嵌套。
+
+			--创建orc文件
+			create table orc1 stored as orc as select * from custs ;
+		
+		2.6)性能评测
+			1,000,000数据。
+			-------------------------------------------------------
+			textFile	|	rcfile	|	orc		|	parquet
+			-------------------------------------------------------
+			30.402s	     31.296			34.544		34.448
+			
+		2.7)hive指定文件格式的方式
+			2.7.1)建表指定
+				CREATE TABLE … STORE AS <File_Format>
+
+			2.7.2)修改表指定
+				ALTER TABLE… [PARTITION partition_spec] SET FILEFORMAT <File_Format> ;
+
+			2.7.3)修改hive默认的表格式
+				SET hive.default.fileformat=<File_Format> ;
+			
+			2.7.4)创建100000行文本数据，分别转储成rcfile、orc、parquet格式，通过mr计算，观察的性能。
+				47.961
+
+	
+	3.压缩
+		减少数据传输量，降低网络IO的负载。
+		--在多级job中，job之间的结果是否需要压缩。
+		SET hive.exec.compress.intermediate=true ;
+		SET hive.intermediate.compression.codec=org.apache.hadoop.io.compress.SnappyCodec ;
+		SET hive.intermediate.compression.codec=org.apache.hadoop.io.compress.GzipCodec ;
+		SET hive.intermediate.compression.type=record|block|none ;
+
+		--控制job的最终输出是否压缩.
+		SET hive.exec.compress.output=true
+		SET mapred.output.compression.codec= org.apache.hadoop.io.compress.GzipCodec
+
+	4.大量小文件
+		4.1)Hadoop Archive and HAR:  归档小文件
+ 		4.2)序列文件
+		4.3)???????CombineFileInputFormat?????
+			合成输入格式。
+			set hive.input.format=org.apache.hadoop.hive.ql.io.CombineHiveInputFormat ;
+			set hive.input.format=org.apache.hadoop.mapred.lib.CombineTextInputFormat ;
+		4.4)hdfds federation
+			 对NN进行扩容.
+			
+		
+		4.5)合并map端文件
+			job没有reduce，只有map的时候，可以启用该属性将所有map输出合并成一个文件。
+			set hive.merge.mapfiles=true ;
+	ALTER TABLE custs SET FILEFORMAT INPUTFORMAT "org.apache.hadoop.hive.ql.io.CombineHiveInputFormat" OUTPUTFORMAT "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat";
+
+
+	ALTER TABLE custs SET FILEFORMAT 
+INPUTFORMAT "com.hadoop.mapred.DeprecatedLzoTextInputFormat"
+OUTPUTFORMAT "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat";

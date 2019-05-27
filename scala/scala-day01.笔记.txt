@@ -1,0 +1,209 @@
+script
+-------------
+	文本文件存放源代码，不需要编译，解释执行。
+	javascript
+	shell
+	python
+
+scala
+-------------
+	java语句脚本化。 
+	2.11
+
+安装scala
+-------------
+	1.下载scala-2.11.8.msi
+	2.安装
+		C:\myprograms\scala.2.11
+
+	3.自动配置环境变量
+		
+	4.启动scala
+		bin\scala.bat
+		scala>
+
+REPL
+--------------
+	read -> evaluate -> print -> loop
+
+	类型推断
+
+scala基本语法
+----------------
+	val	x = 10						//常量,类型推断得到
+	var	x = 10						//变量
+
+	1 + 1							//操作符
+	1.+(1)							//操作符重载
+
+	1 to 10							//构造 1 ,2,3,4 .. 10序列
+	"hello ".toUpperCase()			//字符串方法
+	val x:Int = 10					//声明类型
+
+	[scala常用类型]
+	java				scala
+	--------------------------
+	byte				Byte
+	short				Short
+	int					Int				
+	long				Long
+	char				Char
+	float				Float
+	double				Double
+
+	val x:BigInt = 123456789		//
+	x * x * x * x * x * x * x * x	//大数运算
+
+	//函数:直接调用的
+	import scala.math._				//import math._
+	sqrt(2)							//函数
+	pow(3,2)						//幂函数
+
+	//方法:通过对象调用的是方法。
+
+	"hello world"(0)				//"hello".apply(4)
+	BigInt("12345")					//BigInt.apply(123)
+
+scala控制语句
+-----------------
+	scala任何代码块都有返回值，最后一条语句就是返回值。
+	val y = if(x > 0) 1 else -1
+	//scala没有三元运算符
+	val y = x > 0 ? 1 : -1			//wrong
+
+	//Unit类型，表示()
+	val:Unit = ()
+
+	//scala没有switch语句。
+
+	//{}的用法
+	val y = if (x > 0) 1 else {
+		-1
+		}
+
+	//粘贴模式
+	:paste
+	...
+	ctrl +d					//结束
+
+
+	//
+	var x =100 ; x  =1000	//使用;表示终止
+
+	//打印输出
+	print("hello")
+	println("hello")
+	printf("%s=%d\r\n" , "tom" ,12)
+
+
+	//读取控制台输入
+	readLine("your name is : ")
+	
+	//while循环,scala没有i ++
+	var n = 0 ;
+	while(n < 10){
+		n = n + 1
+		println(n)
+	}
+
+	
+	//for循环
+	for(x <- 1 to 10) println(x)
+
+	var sum = 0 
+	for(x <- 1 to 10) sum += x
+
+	//until[1,10)
+	val x = 1 until 10
+
+	//while循环打印99表格
+	var row = 1 ;
+	while(row <= 9){
+		var col = 1 ;
+		while(col <=row){
+			printf("%dx%d=%d\t" , col , row , col * row)
+			col += 1
+		}
+		println()
+		row += 1
+	}
+
+	//for循环打印99表格
+	for(x <- 1 to 9){
+		for(y <- 1 to x){
+			printf("%dx%d=%d\t" , y , x , x * y)
+		}
+		println()
+	}
+
+	//scala没有break和continue
+	import util.control.Breaks._
+	for(x <- 1 to 10){println(x) ; break()}
+
+	//for高级推导式,类似于双循环嵌套,
+	for(x <- 1 to 3 ; y <- 4 to 6)println(x * y)
+
+	//守卫条件
+	for(x <- 1 to 5 ; y <- 4 to 6 if x == y)println(x * y)
+
+	//yield产生新集合
+	for(x <- 1 to 10 ) yield x * 2
+
+	//函数
+	def add(x:Int , y:Int):Int = x + y
+	add(1,2)												//调用函数
+
+	//递归函数必须声明返回值类型
+	def fac(n:Int):Int = if(n == 1) 1 else n * fac(n-1)		//递归函数
+
+	//默认参数和带名参数
+	def decorate(pre:String = "<<<",str:String,suf:String=">>>") = pre+str+suf
+	decorate("<<<","hello",">>>")
+	decorate(str="hello" , pre="<<<",suf=">>>")				//
+
+	//变长参数
+
+	def sum(args:Int*) = {
+		var sum =0  
+		for(x <- args) sum += x 
+		sum
+	}
+
+	sum(1 to 10:_*)		
+	
+	//过程，函数中没有=,返回值Unit, 表示()
+	def out(){println("hello world")}
+	out													//ok,调用
+	out()												//ok
+
+	//lazy,延迟计算。
+	var x = 1	+ 1
+	lazy var x = 1	+ 1									//<lazy>
+
+	
+
+
+
+
+
+
+
+
+scala中"_"用法
+----------------
+	1.导包
+		import math._				//统配
+
+	2.1 to 10转序列
+		1 to 10:_*
+	3.
+	4.
+
+
+作业
+------------
+	scala实现百钱买白鸡问题!
+	100块钱买100只鸡.
+	公鸡: 5元/只
+	母鸡: 3元/只
+	小鸡: 1元/3只

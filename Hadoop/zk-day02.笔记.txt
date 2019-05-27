@@ -1,0 +1,59 @@
+zk
+--------------
+	协同服务框架，实现HA。
+	集群，
+	容灾能力 = n - 1 / 2
+	使用目录树方式存放数据。
+	每个节点存放数据不能超过1m。
+	zkServer.sh start | stop | status
+	leader				//
+	follower			//
+
+节点类型
+---------------
+	1.persistence
+	2.临时的
+	3.序列节点
+
+数据锁
+---------------
+	1.行级锁，表级锁
+	2.共享读锁 独占写锁
+	3.悲观锁 乐观锁
+
+
+zk观察者模式
+---------------
+	zk的watcher模式只消费一次，如果需要反复观察，需要进行如下处理:
+
+
+	/**
+	 * 测试观察者
+	 */
+	@Test
+	public void testWatcher() throws Exception {
+		String conn = "s102:2181,s103:2181,s104:2181";
+		ZooKeeper zk = new ZooKeeper(conn, 5000, null);
+		zk.getData("/a/a1", new Watcher() {
+			public void process(WatchedEvent event) {
+				System.out.println("数据被人改了！！");
+			}
+		}, null) ;
+		for(;;){
+			Thread.sleep(1000);
+		}
+		//zk.close();
+	}
+
+使用ZooInspector管理zk
+------------------------
+
+
+ZK leader选举
+------------------------
+	快速选举法.
+	比较两个指标，myid和zxid，zxid优先级 > myid优先级.
+	最开始没人投自己一票，陆续交换投票，最终投票一致选择leader。
+
+
+

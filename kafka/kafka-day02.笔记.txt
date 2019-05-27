@@ -1,0 +1,214 @@
+JMS
+--------------
+	java message service.
+	异构系统之间通信。
+	middleware(中间件)
+	destination:目的地
+		queue			//队列模式, P2P(point to point)
+		topic			//发布定于模式，publish-subscribe
+	
+kafka
+--------------
+	消息系统。
+	分布式
+	容灾能力
+	高吞吐量
+	耦合度。
+	重复消费
+	broker				//kafka服务器
+	topic				//主题,
+	partition			//
+	副本				//不能超过broker数。
+	producer			//发送消息
+	consumer			//从kafka提取消息
+	offset				//partition
+						//消费者偏移量
+	实时性				//实时计算
+
+	消费者可以实现负载均衡。//
+
+考察kafka的容错
+------------------------
+	kafka容灾能力定位到分区上，
+	每个分区都是一个小集群，都有leader，其余的都是follower，
+	只要有一个副本还在，仍能够提供服务。
+	kafka分区的容灾能力是 n - 1 .
+
+
+kafka和flume集成
+------------------
+	1.kakfa作为sink
+		flume的数据输出到kafka.
+		1)k_kafka.conf配置文件
+			a1.sources=r1
+			a1.channels=c1
+			a1.sinks=k1
+
+			a1.sources.r1.type=netcat
+			a1.sources.r1.bind=0.0.0.0
+			a1.sources.r1.port=8888
+
+			a1.channels.c1.type=memory
+
+			a1.sinks.k1.type = org.apache.flume.sink.kafka.KafkaSink
+			a1.sinks.k1.kafka.topic = topic1
+			a1.sinks.k1.kafka.bootstrap.servers = s102:9092
+			a1.sinks.k1.kafka.flumeBatchSize = 20
+			a1.sinks.k1.kafka.producer.acks = 1
+			a1.sinks.k1.kafka.producer.linger.ms = 0
+
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+			2)启动flume
+				flume-ng agent -f /soft/flume/conf/k_kafka.conf -n a1
+			
+			3)启动nc
+				nc localhost 8888
+
+	2.kafka作为source
+		1)配置文件
+			a1.sources=r1
+			a1.channels=c1
+			a1.sinks=k1
+
+			a1.sources.r1.type = org.apache.flume.source.kafka.KafkaSource
+			a1.sources.r1.batchSize = 5000
+			a1.sources.r1.batchDurationMillis = 2000
+			a1.sources.r1.kafka.bootstrap.servers = s102:9092
+			a1.sources.r1.kafka.topics = topic1
+			a1.sources.r1.kafka.consumer.group.id = g10
+
+			a1.channels.c1.type=memory
+
+			a1.sinks.k1.type=logger
+
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		2)启动flume
+			flume-ng agent -f /soft/flume/conf/r_kafka.conf -n a1 -Dflume.root=INFO,console
+
+		3)发送消息给kafka
+			略.
+		
+	3.kafka作为channel
+		1)配置
+			a1.sources=r1
+			a1.channels=c1
+			a1.sinks=k1
+
+			a1.sources.r1.type = netcat
+			a1.sources.r1.bind=0.0.0.0
+			a1.sources.r1.port=8888
+
+			a1.channels.c1.type = org.apache.flume.channel.kafka.KafkaChannel
+			a1.channels.c1.parseAsFlumeEvent = false
+			a1.channels.c1.kafka.bootstrap.servers = s102:9092,s103:9092,s104:9092
+			a1.channels.c1.kafka.topic = topic1
+			a1.channels.c1.kafka.consumer.group.id = g11
+
+			a1.sinks.k1.type=logger
+
+			a1.sources.r1.channels=c1
+			a1.sinks.k1.channel=c1
+
+		2)启动flume
+			flume-ng agent -f /soft/flume/conf/r_kafka.conf -n a1 -Dflume.root=INFO,console
+
+		3)发送消息给kafka
+			略.
+
+kafka消费者
+-----------------
+	KafkaConsumer可以定位特定主题下的特定分区上指定的偏移量开始消费。
+	seek()方法需要在assign()|subscribe()之后执行。
+
+	//代码如下:
+	final KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(props);
+
+	List<TopicPartition> list = new ArrayList<TopicPartition>() ;
+	list.add(new TopicPartition("topic2",0));
+	list.add(new TopicPartition("topic2",1));
+
+	//指定消费空间
+	consumer.assign(list);
+	//
+	TopicPartition tp = new TopicPartition("topic2" , 0) ;
+	consumer.seek(tp , 9720);
+	TopicPartition tp2 = new TopicPartition("topic2" , 1) ;
+	consumer.seek(tp2 , 9560);
+
+
+通过kafka改造屏广
+------------------
+	1.引入maven
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-java</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+				<dependency>
+					<groupId>mysql</groupId>
+					<artifactId>mysql-connector-java</artifactId>
+					<version>5.1.17</version>
+				</dependency>
+				<dependency>
+					<groupId>com.mchange</groupId>
+					<artifactId>c3p0</artifactId>
+					<version>0.9.5.2</version>
+				</dependency>
+				<dependency>
+					<groupId>org.apache.kafka</groupId>
+					<artifactId>kafka_2.11</artifactId>
+					<version>0.10.0.1</version>
+				</dependency>
+			</dependencies>
+		</project>
+	2.修改教师端
+		
+	3.
+	4.
+	6.
+
+练习
+----------------
+	创建新主题。
+	将图片发送到kafka集群，
+	通过消费者读出，写入本地磁盘。
+	提示: StringSerilizer | ByteArraySerializer
+
+	kafka-topics.sh --zookeeper s102:2181 --alter --topic topic2 --partitions 6
+
+	{ 
+		"topics": [
+			{"topic": "topic2"}
+		],
+		"version": 1
+	}
+
+	kafka-reassign-partitions.sh --zookeeper s102:2181 --topics-to-move-json-file move.json  --broker-list  "102,103,104"  --generate
+
+	{"version":1,
+	 "partitions":[....]
+	}
+	Proposed partition reassignment configuration
+	{"version":1,
+	 "partitions":[.....]
+	}
+
+	kafka-reassign-partitions.sh --zookeeper s102:2181 --reassignment-json-file reassign.json --execute
+	Current partition replica assignment
+
+	kafka-reassign-partitions.sh --zookeeper s102:2181 --reassignment-json-file reassign.json --verify

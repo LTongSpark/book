@@ -1,0 +1,520 @@
+scala
+----------------
+	java语言脚本化。
+	repl:read evaluate print loop.
+	函数式编程。
+
+高阶函数
+----------------
+	函数的参数或者返回值也可以是函数。
+
+	//定义高阶函数
+	def op(a: (Int,Int)=>Int, b:Int , c:Int):Int = {
+		val r = a(b,c)
+		r 
+	}
+
+	//调用函数
+	def add(a:Int,b:Int):Int= a + b
+	val x:Int = 1 
+	val y:Int = 2
+
+	val z = add _
+
+	op(z ,x , y)
+	op(add _, x , y)
+
+
+线性方程函数
+-----------------
+	y = ax + b
+
+	a:系数
+	b:截距
+
+	//定义函数
+	def line(p1:(Int,Int)=>Int , p2:Int,p3:Int , p4:(Int,Int)=>Int, p5:Int,p6:Int):Int=>Int = {
+		val a = p1(p2,p3) 
+		val b = p4(p5,p6) 
+		
+		def f(x:Int) = a * x + b
+		f _
+	}
+
+	//调用函数
+	def add(a:Int,b:Int) = a + b
+	val v1 = 1 
+	val v2 = 2
+	
+	def sub(a:Int,b:Int) = a - b
+	val v3 = 3 
+	val v4 = 4 
+
+	//y = 3x - 1
+	line(add _ ,v1,v2,sub _ , v3,v4)(5)
+
+	//a:(Int,Int)=>Int
+	//b:(Int,Int)=>Int
+	//c:(Int,Int)=>Int
+
+	//fun2(p1:,,,,,,,)
+	//+ - x
+	1+2 , 3-4 , 5*6 
+	y = ax^2 + bx + c
+
+	y = (3*x*x - x + 30)
+	y(7) = 49 * 3 = 170
+
+//定义函数
+def fun2(x1:(Int,Int)=>Int ,x2:Int,x3:Int ,x4:(Int,Int)=>Int ,x5:Int,x6:Int ,x7:(Int,Int)=>Int ,x8:Int,x9:Int):Int=>Int = {
+val a = x1(x2,x3)
+val b = x4(x5,x6)
+val c = x7(x8,x9)
+
+def ff(x:Int):Int = {
+a * x * x + b * x + c
+}
+ff _
+}
+
+//调用函数
+def add(a:Int,b:Int):Int = a + b
+def sub(a:Int,b:Int):Int = a - b
+def mul(a:Int,b:Int):Int = a * b
+
+val a:Int = 1
+val b:Int = 2
+
+val c:Int = 3
+val d:Int = 4
+
+val e:Int = 5
+val f:Int = 6
+
+//正常调用
+fun2(add,a,b ,sub , c,d , mul, e,f)(7)
+//匿名函数调用
+fun2((a:Int,b:Int)=>a+b,1,2,(a:Int,b:Int)=>a-b,3,4,(a:Int,b:Int)=>a*b,5,6)(7)
+//匿名函数调用(类型推断，省略参数类型)
+fun2((a,b)=>a+b,1,2,(a,b)=>a-b,3,4,(a,b)=>a*b,5,6)(7)
+
+
+柯里化
+-----------------
+	将多个参数转换成每次调用一个参数的函数，链条式调用即可。
+	柯里化表示法，能够很好的利用类型推断和隐式值，调用简洁。
+	
+	//原函数
+	add(x:Int,y:Int)= x + y
+
+	//
+	def add(x:Int)={
+	def f(y:Int)=x+y
+	f _
+	}
+
+	//柯里化,
+	def add(x:Int)(y:Int)={
+	  x + y
+	}
+	def add(x:Int)(y:Int)(z:Int)={x + y + z}
+
+
+控制抽象
+------------------
+//定义函数
+def runInThread(block:()=>Unit) = {
+new Thread(){
+override def run(){
+block()
+}
+}.start()
+}
+
+//调用函数
+runInThread(()=>println("hello world"))
+
+//使用换名调用表示法定义函数
+def runInThread(block: =>Unit) = {
+new Thread(){
+override def run(){block}
+}.start()
+}
+
+runInThread(println("hello world"))
+
+
+List
+----------------
+	可重复。
+	//不可变List
+	val l = 1::2::3::Nil
+	//错误的
+	l.++Array(4,5)
+
+
+	//可变List
+	import scala.collection.mutable.LinkedList
+	val ll = LinkedList(1,2,3)
+	val ll = LinkedList.apply(1,2,3)
+	//赋值
+	ll.elem = 0
+
+	//错误,head不能赋值
+	ll.head = 0 
+	//
+	ll.tail.elem = 0
+
+
+
+Set
+----------------
+	不重复。
+	val s = Set(1,2,3)
+	s + 4
+	s.head
+	s.tail
+
+	//循环
+	s.foreach(println)
+
+	val s1 = Set(1,2,3)
+	val s2 = Set(2,3,4)
+	
+	//并集
+	s1 | s2
+	s1 union s2
+	s1 ++ s2
+	s1.++(s2)
+
+	//交集
+	s1 & s2
+	s1.intersect(s2)
+
+	//差集
+	s1 &~ s2
+	s1.diff(s2)
+	s1 -- s2
+
+	//函数应用给集合
+	val l = List("tom","tomas" , "tomasLee")
+	
+	//转大写
+	l.map(_.toUpperCase)
+	//转大写
+	for(x <- l) yield x.toUpperCase
+
+化简和折叠
+------------------
+	//化简
+	val l = List(1,2,3,4)
+
+	//(1 + 2) + 3 + 4
+	l.reduceLeft(_ + _) = 10
+	l.reduceLeft(_ - _) = -8
+
+	//1 - (2 - (3 - 4))
+	l.reduceRight(_ - _) = -2
+
+
+	//折叠(fold)
+	l.foldLeft(0)(_ - _) = -10
+	l./:(0)(_ - _) = -10
+	l.foldLeft(10)(_ - _) = 0
+
+	l.foldRight(0)(_ - _) = -2
+	l.:\(0)(_-_) = -2
+	
+	0 :: l
+	Array(-1,0).toList ::: l
+
+	//通过迭代器迭代集合
+	val it = l.iterator
+	while(it.hasNext)println(it.next)
+
+模式匹配
+-----------------
+//常规用法
+val x = '+'
+x match {
+case '+' => println("+++++++")
+case '-' => println("-------")
+case _ => println("~~~~~~~")
+}
+
+//守卫条件
+val x = '1'
+x match {
+case '+' => println(" > 0 ")
+case '-' => println(" < 0 ")
+case _ if Character.isDigit(x)=> println("is number")
+case _ => println("other")
+}
+
+//跟随变量
+val str = "123"
+str.length() match {
+case 10 => println(" long string ")
+case 2 => println(" short string ")
+case len => println("normal string , str's length is " + len)
+}
+
+//常量控制
+import  java.awt.Color._
+val c = "bluegreen"
+val bluegreen = "bluegreen"
+c match{
+  //case RED => println("red color!!") 
+  //识别成常量,否则就是变量对待
+  case `bluegreen` => println("red BLUEGREEN!!") 
+}
+
+//类型判断
+val x:Any = "hello"
+x match{
+  case a:Int => println("整数")
+  case b:String => println("字符")
+  case c => println("其他")
+}
+
+//匹配数组,列表,元组
+val arr = Array(2,"3")
+arr match{
+case Array(0) => println(1)
+case Array(x,y) => println("2" + x + "," + y)
+case Array(0,_*) => println(3)
+case _ => println(4)
+}
+
+val l = 0 :: 1 ::2 :: Nil
+l match{
+//0
+case 0::Nil => println(1)
+//2元素
+case x::y::Nil => println(2)
+//以0开头
+case 0::tail => println(3)
+case _ => println(4)
+}
+
+//元组
+val t:Tuple2[Any,Any] = (1,2)
+t match{
+case (1,_) => println(1)
+case (y,2) => println(2)
+case _ => println(3)
+}
+
+//提取器(unapply)
+val t = ("001","tomas")
+val (id,name) = t
+
+val (a,b) = BigInt(5) /% 2
+
+系统属性
+------------
+//自动转换properties集合成scala的map
+import scala.collection.JavaConversions._
+val prop = System.getProperties
+for((k,v) <- prop){
+	println(k + "-->" + v)
+}
+
+样例类
+--------------
+	优化之后的类，方便用于模式匹配。
+	内置实现hashcodo，toString，serializable接口，可比较接口。
+	apply()/unapply()
+
+	abstract class Amount
+	case class Dollar(v:Double) extends Amount
+	case class Currency(v:Double, unit:String) extends Amount
+	case object Nothing00 extends Amount
+
+	var a: Amount= Dollar(100)
+	a = Currency(100,"人民币")
+	a = Nothing00
+	a match{
+		case Dollar(v) => println("美元 : " + v)
+		case Currency(u,v) => println("货币 : " + u + " , " + v)
+		case Nothing00 => println("nonnn")
+	}
+
+密封类
+---------------
+	sealed修饰的类，密封的所有子类必须和自己位于同一个源文件中。
+	能够在一个文件中找到所有的子类。
+
+	sealed abstract class Amount
+	case class Dollar(v:Double) extends Amount
+	case class Currency(v:Double, unit:String) extends Amount
+	case object Nothing00 extends Amount
+
+Option
+---------------
+	可空。
+	sealed abstract class Option
+	//有值
+	case class Some[+A](x: A) extends Option
+	//等价于null
+	case object None extends Option[Nothing]
+
+	//使用Option定义函数返回值，有效规避null判断问题，
+	//使用None样例对象为特定空值。
+	def getScore(name:String):Option[Double] = {
+		if(name.equals("tom")){
+			None
+		}else{
+			Some(100)
+		}
+	}
+
+	val s = getScore("tom")
+	if(s.isEmpty){
+		println("没有此用户")
+	}
+	else{
+		println("分数 ： " + s.get)
+	}
+
+偏函数
+-----------------
+	包含在{}内的一组case语句。
+	对模式匹配中的匹配条件进行重用。
+	val f:PartialFunction[Char,Int]= {case '+' => 1 ; case '-' => -1 ; case _ => 0}
+	//调用偏函数
+	println(f('0'))
+	//判断是否定义了特定字符的处理方式。
+	f.isDefinedAt('+')
+
+类型参数
+------------------
+	//类泛型
+	class Pair[T,S](val one:T,val two:S)
+
+	val o1 = new Pair(100,"tom")
+	//right
+	val o2 = new Pair[Int,String](100,"tom")
+	
+	//wrong
+	val o2 = new Pair[String,String](100,"tom")
+	
+	//方法泛型
+	def middle[T](arr:Array[T]) = arr(arr.length / 2)
+	middle(Array(1,2,3))
+
+	//泛型边界,T必须是Comparable子类或实现类。
+	// <: 上限
+	class Pair[T <: Comparable[T]]{
+		def smaller(a:T , b:T) = {
+			if(a.compareTo(b) < 0) a else b
+		}
+	}
+
+	val o = new Pair[java.lang.Integer]()
+	println(o.smaller(1,2))
+
+	// >: 下限
+	class Pair[T](val first:T , val second:T){
+		def replaceFirst[R >: T](a:R) = new Pair[R](a,second)
+	}
+
+	class Dog
+	class Jing8(name:String) extends Dog
+	class VipJing8(val name:String,val age:Int) extends Jing8(name)
+
+	val j1 = new Jing8("j1")
+	val j2 = new Jing8("j2")
+	val j3 = new VipJing8("j3",12)
+
+	val p1 = new Pair[Jing8](j1,j2)
+	val d1 = new Dog()
+	val p2 = p1.replaceFirst(j3)
+	println(p2.first)
+	println(p2.second)
+
+	// <% : 视图界定,能够隐式转换成需要的类型。
+	class Pair[T <% Comparable[T]]{
+		def smaller(a:T , b:T) = {
+			if(a.compareTo(b) < 0) a else b
+		}
+	}
+
+	val o = new Pair[Int]()
+	println(o.smaller(1,2))
+
+	//型变
+	1.协变
+		class Pair[+T]
+		
+		class Person
+		class Student extends Person
+		Pair[Student]是Pair[Person]的子类型
+
+	2.逆变
+		class Pair[-T]
+
+		class Person
+		class Student extends Person
+
+		Pair[Student]是Pair[Person]的父类型
+
+
+隐式转换
+----------------
+	1.隐式转换函数
+		使用implicit修饰的带有单个参数的函数。
+		val f1 = Fraction(1,2)
+        //隐式转换函数
+        implicit def fff(n:Int) = Fraction(n,1)
+        val f2 = f1 * 3
+        println(f2.top)
+
+
+		//java转换包
+		import scala.collection.JavaConversions._
+
+	2.隐式参数
+		//
+		case class Decorator(val left:String , val right:String)
+		//隐式参数
+		def quote(what:String)(implicit dec:Decorator) = dec.left + what + dec.right
+		//隐式值
+        implicit val d = Decorator("{{{", "}}}")
+		//
+        println(quote("hello"))
+
+scala实现单词统计
+-----------------
+	//加载文件
+	val it = Source.fromFile("d:/1.txt").getLines()
+	var list:List[String] = Nil
+
+	for(line <- it){
+		list = line :: list
+	}
+	//统计单词个数,压扁
+	val list2 = list.flatMap(_.split(" "))
+	val list3 = list2.groupBy((s:String)=>s)
+
+	//def f1(a:Tuple2[String,List[String]]) = (a._1 , a._2.length)
+	val list4 = list3.map((a:Tuple2[String,List[String]])=>(a._1,a._2.length))
+	println()
+
+
+	//排序，分组，转换list，
+	val it = Source.fromFile("d:/1.txt")
+	val doc = it.getLines().mkString(" ")
+	val list = doc.split(" ").toList
+
+	val list2 = list.groupBy((s:String)=>s).map((t:Tuple2[String,List[String]])=>(t._1,t._2.length))
+
+
+	val list3 = list2.toList
+	val list4 = list3.sortBy((t:Tuple2[String,Int]) => -t._2)
+
+	println(doc)
+
+作业
+--------------------
+	使用scala实现taggen程序。

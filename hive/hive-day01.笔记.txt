@@ -1,0 +1,594 @@
+split size
+-------------
+	min max block
+	最后一片有10%判断。
+
+federation : 
+------------------
+	对名称进行扩容。
+
+
+数据库
+----------------
+	RDBMS
+	关系型数据库。
+	OLTP			//online transaction process,在线事务处理
+					//事务，
+					//ACID，atomic，cosistent，isolate，durable
+					//响应性，及时性。
+					//延迟低。
+
+
+OIV				
+-------------
+	off line image viewer,
+OEV
+-------------
+	off line edit viewer .
+
+
+解决mysql不允许远程连接
+--------------------------
+	1.修改root账户的授权给所有主机
+		$mysql>GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'root' WITH GRANT OPTION;
+	
+	2.清理授权
+		$mysql>FLUSH PRIVILEGES;
+	
+hadoop
+-----------------
+	MR ： mapreduce
+	高度简化的编程模型。
+	开发效率低。
+
+
+hive
+------------------
+	小蜜蜂。
+	数据仓库(数仓)
+	支持有限的事务。
+	OLAP			//online analyze process,在线分析处理。
+					//延迟高。
+	构建在hadoop之上的数据仓库，执行引擎使用的就是hadoop的mr，
+	存储也是存hadoop hdfs之上。
+	使用类似sql方式执行mr。这些SQL称之为HQL(HiveQL) .
+	交互方式改成了sql，执行时转换成MR架构进行计算。
+
+安装hive
+------------------
+	1.介绍
+		hive没有集群，只是一个client工具。只需要安装在一台主机上。
+		hadoop集群使用ha模式。
+	2.启动zk和hadoop集群，并使用ha模式
+		$>xzk.sh start
+		$>xchhadoop.sh ha
+
+	3.安装hive
+		tar
+		ln
+		nano /etc/profile
+
+	4.配置hive
+		cp hive-default.xml.template hive-site.xml
+
+		[hive-site.xml]
+		...
+		<property>
+			<name>javax.jdo.option.ConnectionDriverName</name>
+			<value>com.mysql.jdbc.Driver</value>
+			<description>Driver class name for a JDBC metastore</description>
+		</property>
+		<property>
+			<name>javax.jdo.option.ConnectionURL</name>
+			<value>jdbc:mysql://192.168.231.1:3306/big9_hive</value>
+			<description>
+			JDBC connect string for a JDBC metastore.
+			To use SSL to encrypt/authenticate the connection, provide database-specific SSL flag in the connection URL.
+			For example, jdbc:postgresql://myhost/db?ssl=true for postgres database.
+			</description>
+		</property>
+		<property>
+			<name>javax.jdo.option.ConnectionUserName</name>
+			<value>root</value>
+			<description>Username to use against metastore database</description>
+		</property>
+		<property>
+			<name>javax.jdo.option.ConnectionPassword</name>
+			<value>root</value>
+			<description>password to use against metastore database</description>
+		</property>
+		<property>
+			<name>hive.server2.enable.doAs</name>
+			<value>false</value>
+			<description>
+			Setting this property to true will have HiveServer2 execute
+			Hive operations as the user making the calls to it.
+			</description>
+		</property>
+		...
+
+	4'.替换hive-site.xml的环境变量
+		${system:java.io.tmpdir}=/home/centos/hive/tmp
+		${system:user.name}=centos
+
+	5.复制mysql驱动到/hve/lib下。
+		C:\Users\Administrator\.m2\repository\mysql\mysql-connector-java\5.1.17\mysql-connector-java-5.1.17.jar
+		从maven本地仓库复制mysql驱动到hive/lib下。
+
+	6.在mysql中创建数据库big9_hive;
+		$mysql>create database big9_hive ;
+
+	7.初始化hive的数据结构。
+		$>schematool -dbType mysql -initSchema
+
+启动hive命令行
+---------------
+	$>hive/bin/hive
+	$hive>show databases ;								-- 显式数据库
+	$hive>create database mydb ;						-- 创建数据库
+	$hive>use mydb ;									-- 使用库
+	$hive>create table custs(id int , name string) ;	-- 建表
+	$hive>desc custs ;									-- 查看表结构
+	$hive>desc formatted custs ;						-- 查看格式化表结构
+	$hive>insert into custs(id,name) values(1,'tom');	-- 插入数据，转成mr.
+	$hive>select * from custs ;							-- 查询，没有mr
+	$hive>select * from custs order by id desc ;		-- 全排序，会生成mr.
+	$hive>exit ;										-- 退出终端
+
+
+查看mysql中的元信息
+----------------------
+	select * from dbs ;									-- 存放库信息
+	select * from tbls ;								-- 存放表信息
+
+hive脚本分析
+----------------------
+	$>hive  --help										-- 查看hive帮助
+	$>hive  --server help								-- === hive  --help	
+	$>hive  --server cli								-- 进入hive命令行终端。
+			--beeline 
+			--cleardanglingscratchdir 
+			--cli hbaseimport 
+			--hbaseschematool 
+			--help 
+			--hiveburninclient 
+			--hiveserver2 
+			--hplsql 
+			--hwi 
+			--jar 
+			--lineage 
+			--llapdump 
+			--llap 
+			--llapstatus 
+			--metastore 
+			--metatool 
+			--orcfiledump 
+			--rcfilecat 
+			--schemaTool 
+			--version
+
+	$>hive  --version
+	$>hive  --service
+	$>hive  --rcfilecat
+	$>hive  --orcfiledump
+	$>hive  --llapdump
+	$>hive  --help
+	$>hive  --debug
+
+
+使用jdbc方式远程访问hive
+------------------------
+	1.启动hive的hiveserver2服务器
+		$>hive/bin/hiveserver2 &								//后台启动hivesever2
+
+	2.查看是否启动成功
+		$>netstat -anop |grep 10000		
+
+	3.启动beeline客户端命令行
+		$>hive --service beeline								// 
+		$>beeline												//
+		$beeline>help											--查看帮助
+		$beeline>!connect jdbc:hive2://localhost:10000/mydb;
+		$beeline>show databases ;
+		$beeline>!quit ;										//退出
+
+使用jdbc API编程实现对hive的访问
+-------------------------
+	1.创建java模块，添加maven依赖
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-hive</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.hive</groupId>
+					<artifactId>hive-jdbc</artifactId>
+					<version>2.1.0</version>
+				</dependency>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+			</dependencies>
+		</project>
+			
+	2.编程测试代码
+		package com.it18zhang.hive.test;
+
+		import org.junit.Test;
+
+		import java.sql.Connection;
+		import java.sql.DriverManager;
+		import java.sql.ResultSet;
+		import java.sql.Statement;
+
+		/**
+		 *
+		 */
+		public class TestCRUD {
+			/**
+			 * 测试查询
+			 */
+			@Test
+			public void testSelect() throws Exception {
+				String driver = "org.apache.hive.jdbc.HiveDriver" ;
+				String url = "jdbc:hive2://s101:10000/mydb" ;
+				Class.forName(driver) ;
+				Connection conn = DriverManager.getConnection(url) ;
+				Statement st = conn.createStatement();
+				ResultSet rs = st.executeQuery("select * from custs order by id desc") ;
+				while(rs.next()){
+					int id = rs.getInt(1);
+					String name = rs.getString(2) ;
+					System.out.println(id + "/" + name);
+				}
+				rs.close();
+			}
+		}
+
+hive和hadoop对应关系
+-----------------------
+	hive数据库				hadoop目录
+	hive表					hadoop目录
+
+
+hive数据类型
+-----------------------
+	[基本类型]
+		TINYINT			//byte 1
+		SMALLINT		//short 2
+		INT				//int 4
+		BIGINT			//long 8
+		FLOAT			//float 4
+		DOUBLE			//double 8
+		DECIMAL			//decimal 精度和刻度decimal(10,3)
+		BINARY			//二进制
+		BOOLEAN			//TRUE | FALSE
+		STRING			//字符串
+		CHAR			//定长<= 255
+		VARCHAR			//变长<=65355.
+		DATE			//日期'2013-01-01'
+		TIMESTAMP		//时间戳'2013-01-01 12:00:01.345'
+
+	[复杂类型]
+		ARRAY			//数组['apple','orange','mango']
+		MAP				//map {1:"apple",2: "orange"}
+		STRUCT			//结构体{1, "apple"}
+		NAMED STRUCT	//命名结构体{"apple":"gala","weightkg":1}
+		UNION			//组合{2:["apple","orange"]}
+
+	1.样本数据
+		Michael|Montreal,Toronto|Male,30|DB:80|Product:Developer Lead
+		Will|Montreal|Male,35|Perl:85|Product:Lead,Test:Lead
+		Shelley|New York|Female,27|Python:80|Test:Lead,COE:Architect
+		Lucy|Vancouver|Female,57|Sales:89,HR:94|Sales:Lead
+
+	2.创建表
+		CREATE external TABLE employee
+		(
+			name string,
+			arr ARRAY<string>,
+			struc STRUCT<sex:string,age:int>,
+			map1 MAP<string,int>,
+			map2 MAP<string,ARRAY<string>>
+		)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY '|'
+		COLLECTION ITEMS TERMINATED BY ','
+		MAP KEYS TERMINATED BY ':'
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+	
+	
+	3.创建文本文件
+		[employee.txt]
+		Michael|Montreal,Toronto|Male,30|DB:80|Product:Developer Lead
+		Will|Montreal|Male,35|Perl:85|Product:Lead,Test:Lead
+		Shelley|New York|Female,27|Python:80|Test:Lead,COE:Architect
+		Lucy|Vancouver|Female,57|Sales:89,HR:94|Sales:Lead
+
+	4.加载文件到hive表中
+		//加载本地数据，相当于put到hdfs的hive的表目录下.
+		$hive>load data local inpath '/home/centos/employee.txt' into table employee ;
+
+		//执行查询
+		$hive>select name,arr[0] , struc.sex , map1["DB"] from employee ;
+
+		//hive中直接执行hdfs命令
+		$hive>dfs -mv /user/hive/warehouse/mydb.db/employee/employee.txt /user/centos
+
+		//加载hdfs上的文件到hive表，等价于移动操作。
+		$hive>load data inpath 'hdfs://mycluster/user/centos/employee.txt' into table employee ;
+
+		//重命名表
+		$hive>alter table employee rename to emp ;
+
+		//删除表
+		$hive>drop table emp ;
+
+
+表的类型
+---------------
+	1.内部表
+		托管表。
+		managed
+		删除表时，数据也被删除。
+	2.外部表
+		external
+		删除表时，数据不会删除，只删除表结构。
+
+hive函数
+---------------
+	//显式所有函数
+	$hive>show functions ;
+
+	//查询特定函数的帮助(可以指定是否显式扩展信息)
+	$hive>desc function [extended] current_database;
+
+	//查询数据库
+	$hive>select current_database();
+
+	//常规函数
+	$hive>select current_user();
+	$hive>select current_date();
+	$hive>select current_timestamp();
+	$hive>select current_database();
+	$hive>select upper('hello world');
+	$hive>select lower('hello world');
+	$hive>select substr('hello' , 2,2);			//el
+	$hive>select substr('hello' , -3);			//llo
+
+	//表生成函数,UDTF(user define table function)
+	$hive>select explode(arr) from emp;	
+	$hive>select explode(split('hello world' , ' ')) from emp;	
+
+hive实现word count
+----------------------
+	1.创建一张表doc
+		CREATE external TABLE doc
+		(
+		line string
+		)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY ','
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+
+	2.准备文本文件
+		[1.txt]
+		hello world1
+		hello world1
+		hello world2
+		hello world3
+		hello world4
+		hello world5
+
+	3.加载数据到doc表
+		$hive>load data local inpath '/home/centos/1.txt' into table doc ;
+	
+	4.执行查询
+		$hive>select * from doc ;
+		hive>
+			select 
+				t.word , count(1) cnt
+			from
+				(
+					select explode(split(line,' ')) word from doc
+				) t
+			group by 
+				t.word
+
+			order by cnt desc 
+			limit 3 ;
+
+hive命令控制
+-----------------
+	1.显式表头
+		a)临时方式
+			set hive.cli.print.header=true ;
+		
+		b)永久方式
+			[hive-site.xml]
+			<property>
+				<name>hive.cli.print.header</name>
+				<value>true</value>
+			</property>
+
+修改hdfs的静态用户名
+--------------------
+	1.修改文件core-site.xml
+		<property>
+			<name>hadoop.http.staticuser.user</name>
+			<value>centos</value>
+		</property>
+	
+	2.分发并重启
+		$>xsync.sh core-site.xml
+
+创建表模式
+-------------------
+	//创建表，携带数据CTAS(create table as select .)
+	$hive>create table emp2 as select * from emp where ...;
+	
+	//创建表，不携带数据
+	$hive>create table emp2 like emp ;
+
+快速清空表
+-------------------
+	truncate table emp2 ;
+
+
+分区表
+-------------------
+	1.介绍
+		hive分区对应的是表下面的子目录。
+
+	2.创建分区表
+		CREATE TABLE custs
+		(
+		id int,
+		name string ,
+		age int
+		)
+		PARTITIONED BY (prov string, city string)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY ','
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+
+	3.手动添加分区
+		//同时添加多个分区
+		alter table custs add PARTITION (prov='hebei', city='baoding') PARTITION (prov='hebei', city='shijiazhuang') ;
+
+		//查看分区
+		show partitions custs ;
+
+		//删除分区
+		alter table custs drop partition(prov='hebei',city='shijiazhuang') ;
+		
+		//目录结构
+		///user/hive/warehouse/mydb.db/custs/prov=hebei/city=baoding
+		///user/hive/warehouse/mydb.db/custs/prov=hebei/city=shijiazhuang
+
+	4.加载数据到分区表
+		4.1)准备数据
+			[custs.txt]
+			1,tom,12
+			2,tomas,13
+			3,tomasLee,14
+			4,tomson,15
+
+		4.2)加载
+			$hive>load data local inpath '/home/centos/custst.txt' into table custs partition(prov='hebei',city='baoding') ;
+
+
+hive的连接操作
+------------------
+	1.准备数据
+		[custs.txt]
+		1,tom,12
+		2,tomas,13
+		3,tomasLee,14
+		4,tomson,15
+
+		[orders]
+		1,no001,100.0,1
+		2,no001,100.0,1
+		3,no001,100.0,2
+		4,no001,100.0,2
+		5,no001,100.0,2
+		6,no001,100.0,3
+		7,no001,100.0,3
+		8,no001,100.0,3
+		9,no001,100.0,3
+		10,no001,100.0
+
+
+	2.创建custs表和orders表
+		[custs]
+		CREATE TABLE custs
+		(
+		id int,
+		name string ,
+		age int
+		)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY ','
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+
+		[orders]
+		CREATE TABLE orders
+		(
+		id int,
+		orderno string ,
+		price float ,
+		cid int
+		)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY ','
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+	
+	3.加载本地数据到表。
+		$hive>load data local inpath '/home/centos/custs.txt' into table custs ;
+		$hive>load data local inpath '/home/centos/orders.txt' into table orders ;
+	
+	4.执行各种查询
+		//笛卡尔积查询
+		select a.*,b.* from custs a , orders b ;
+		//交叉连接
+		select a.*,b.* from custs a cross join orders b ;
+
+
+		//等值连接
+		select a.*,b.* from custs a , orders b where a.id = b.cid;
+		//内连接查询
+		select a.*,b.* from custs a inner join orders b on a.id = b.cid ;
+
+		//左外链接
+		select a.*,b.* from custs a left outer join orders b on a.id = b.cid ;
+
+		//右外链接
+		select a.*,b.* from custs a right outer join orders b on a.id = b.cid ;
+		
+		//****全外链接*****
+		select a.*,b.* from custs a full outer join orders b on a.id = b.cid ;
+
+		//查询没有订单的客户
+		1.子查询
+			//使用6次job.
+			select * from custs where id not in (select distinct cid from orders where cid is not null) ;
+		
+		2.连接查询
+			//1次job
+			select a.* from custs a left outer join orders b on a.id = b.cid where b.cid is null ;
+
+		3.查询订单个数为0的客户
+			select a.*,b.* from cust a left outer join orders b on a.id = b.cid
+		
+		4.union联合查询
+			//去重
+			select a.id,a.name from custs a union select b.id,b.price from orders b ;
+			//不去重
+			select a.id,a.name from custs a union all select b.id,b.price from orders b ;
+
+		5.聚合函数
+			//max min count sum
+			select ... from ... where .. group by .. having .. order by .. limit .. ;
+			
+			
+			
+			select对应的是mr中的map函数，from 对应的是输入
+			where 是map函数 
+			group by 是par
+			having 是reduce端
+			order by 是二次排序后的reduce端
+			limit在reduce之后作业

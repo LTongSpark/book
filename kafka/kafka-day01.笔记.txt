@@ -1,0 +1,507 @@
+JMS
+-----------------
+	java message system.
+	java消息系统。
+	middle ware:中间件
+	系统间通信，耦合度降低。
+	1.Producer			
+		生产者
+	2.Consumer			
+		消费者
+	3.destination
+		目的地。
+		3.1)queue
+			队列中的消息只能有一个消费者消费。
+			P2P模式 : point to point,点对点模式。
+
+		3.2)topic
+			主题.
+			发送给主题的消息可以有多个消费者。
+			publish-subscribe,发布订阅模型(pub-sub)
+
+Kakfa
+-----------------
+	分布式的.
+	高吞吐量。
+	Failover
+	巨大的缓存。
+	消息系统。
+	kafka中都是topic，没有队列。
+
+	每个topic可以划分成多个分区.
+
+安装kafka
+----------------
+	1.tar
+	2.ln
+	3.path
+	4.分发kafka安装目录到s102 ~ s104
+	5.环境变量分发
+		
+配置kafka集群并启动
+---------------
+	1.修改每台kafka的配置文件
+		[kakfa/config/server.properties]
+		broker.id=102
+		...
+		log.dirs=/home/centos/kafka/logs
+		...
+		zookeeper.connect=s102:2181,s103:2181,s104:2181
+		
+	2.启动kafka服务器
+		#后台启动kafka服务器
+		kafka/bin/kakfa-server-start.sh -daemon ../config/server.properites
+
+	3.编写kafka集群启动脚本
+		[/usr/local/bin/xkafka.sh]
+		#!/bin/bash
+		hosts="s102 s103 s104"
+		for x in $hosts ;
+		do
+		  tput setaf 2
+		  echo ======== $x ========
+		  tput setaf 7
+		  ssh $x "source /etc/profile;kafka-server-$1.sh -daemon /soft/kafka/config/server.properties" ;
+		done
+
+	4.通过脚本启动和停止集群
+		xkafka.sh start
+		xkafka.sh stop
+
+	5.验证
+
+体验kafka
+------------------
+	1.创建kafka主题
+		#查看帮助
+		bin/kafka-topics.sh --help
+
+		#创建主题,kafka主题的副本数不能超过节点数
+		bin/kafka-topics.sh --create --topic topic1 --replication-factor 2 --partitions 4 --zookeeper s102:2181
+
+		#查看主题
+		bin/kafka-topics.sh --list --zookeeper s102:2181
+
+	2.启动控制台消费者
+		#启动后，会阻塞.
+		bin/kafka-console-consumer.sh --zookeeper s102:2181 --topic yc-info
+	
+	3.启动控制台生产者
+		bin/kafka-console-producer.sh --broker-list s102:9092 --topic yc-info
+	
+	4.在生产者发消息，消费者收消息 
+
+
+主题、分区、副本分布关系
+------------------------
+	分区 * 副本 = 该主题所含所有文件夹个数。
+	//
+
+	[s102]
+	topic1-1
+	topic1-2
+	topic1-3
+
+	[s103]
+	topic1-0
+	topic1-2
+	topic1-3
+
+	[s104]
+	topic1-0
+	topic1-1
+
+通过API编写消息生产者
+-------------------------
+	0.maven依赖
+		<?xml version="1.0" encoding="UTF-8"?>
+		<project xmlns="http://maven.apache.org/POM/4.0.0"
+				 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+				 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+			<modelVersion>4.0.0</modelVersion>
+
+			<groupId>com.it18zhang</groupId>
+			<artifactId>my-kafka</artifactId>
+			<version>1.0-SNAPSHOT</version>
+
+			<dependencies>
+				<dependency>
+					<groupId>org.apache.kafka</groupId>
+					<artifactId>kafka_2.11</artifactId>
+					<version>0.10.0.1</version>
+				</dependency>
+				<dependency>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+					<version>4.11</version>
+				</dependency>
+			</dependencies>
+		</project>
+	1.编写生产者程序
+		package com.it18zhang.kafka.test;
+
+		import java.util.Properties;
+
+		import kafka.javaapi.producer.Producer;
+		import kafka.producer.KeyedMessage;
+		import kafka.producer.ProducerConfig;
+		import org.junit.Test;
+
+		/**
+		 * Created by Administrator on 2018/2/4.
+		 */
+		public class TestProducer {
+
+			/**
+			 * 发送消息给kafka集群
+			 */
+			@Test
+			public void testSend(){
+				//属性集合
+				Properties props = new Properties();
+				props.put("metadata.broker.list", "s102:9092");
+				props.put("serializer.class", "kafka.serializer.StringEncoder");
+				props.put("request.required.acks", "1");
+
+				//创建生产者对象
+				Producer p = new Producer<Integer, String>(new ProducerConfig(props));
+				//构造消息对象,携带key
+				KeyedMessage<Integer, String> data = new KeyedMessage<Integer, String>("topic1", "tom1");
+
+				p.send(data);
+
+				System.out.println("over!");
+			}
+		}
+
+	2.KafkaProducer
+		2.1)介绍
+			线程安全的，可以在多线程之间共享一个实例，速度好于多个生产者实例。
+			生产客户端有缓冲区池构成，存放还没有传输给server的记录。
+			
+			后台线程负责调整缓冲区容量，向server发送请求。
+
+			send()方法是异步的。send()方法添加recod到buffer，立即返回。
+			使得生产者通过batch手段对record进行高效处理。
+
+			ack模式，控制请求何时被认为是完成。
+			all(-1)模式表示所有节点都完成记录的本地持久化，有着最佳的持久化保证，但是速度最慢。
+			ack的值:
+				-1			//all
+				0			//server不发送回执
+				1			//leader完成数据的本地持久化即发送回执。
+
+			如果请求失败，生产者会自动重试，retries属性可以控制重试次数。
+
+			生产者的client buffer是针对每个分区的，可以通过batch.size指定。
+
+			发送到缓冲区的数据即刻发走，可以通过linger.ms(逗留时间毫秒数，默认0)来控制，
+	  
+			buffer.memory是client缓冲区的总内存，当缓冲区内存耗尽时会引发block，block时间通过max.block.ms设置.
+
+			key.serializer和value.serializer控制key和value如何串行化。
+			也可以使用ByteArrayserializer来串行化字节数组(主要用于非文本的情况)。
+
+		2.2)编程
+			package com.it18zhang.kafka.test;
+
+			import org.apache.kafka.clients.producer.KafkaProducer;
+			import org.apache.kafka.clients.producer.Producer;
+			import org.apache.kafka.clients.producer.ProducerRecord;
+			import org.junit.Test;
+
+			import java.util.Properties;
+
+			/**
+			 * 使用新API实现生产者
+			 */
+			public class TestNewAPIProducer {
+
+				@Test
+				public void testSend(){
+					Properties props = new Properties();
+					props.put("bootstrap.servers", "s102:9092");
+					props.put("acks", "all");
+					props.put("retries", 0);
+					props.put("batch.size", 16384);
+					props.put("linger.ms", 1);
+					props.put("buffer.memory", 33554432);
+					props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+					props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+					Producer<String, String> producer = new KafkaProducer<String, String>(props);
+					for (int i = 0; i < 100; i++){
+						producer.send(new ProducerRecord<String, String>("topic1", Integer.toString(i), "jerry" + i));
+					}
+					producer.close();
+					System.out.println("over");
+				}
+			}
+
+
+测试ack不同模式发送效率
+---------------------------
+	package com.it18zhang.kafka.test;
+
+	import org.apache.kafka.clients.producer.*;
+	import org.junit.Test;
+
+	import java.util.Properties;
+	import java.util.concurrent.ExecutionException;
+	import java.util.concurrent.Future;
+
+	/**
+	 * 使用新API实现生产者
+	 */
+	public class TestNewAPIProducer {
+
+		@Test
+		public void testSend(){
+			Properties props = new Properties();
+			props.put("bootstrap.servers", "s102:9092");
+			//all:-1
+			props.put("acks", "-1");
+			props.put("retries", 0);
+			props.put("batch.size", 16384);
+			props.put("linger.ms", 1);
+			props.put("buffer.memory", 33554432);
+			props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+			props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+			Producer<String, String> producer = new KafkaProducer<String, String>(props);
+			for (int i = 0; i < 10; i++){
+				//异步
+				producer.send(new ProducerRecord<String, String>("topic2", Integer.toString(i), "kkk" + i), new Callback() {
+					public void onCompletion(RecordMetadata md, Exception exception) {
+						//回执
+						String t = md.topic() ;
+						int par = md.partition() ;
+						long offset = md.offset() ;
+						System.out.printf("acked : %s,%d,%d\r\n"  , t,par,offset);
+					}
+				});
+				System.out.println("into buffer! : " + i);
+			}
+			producer.close();
+			System.out.println("over");
+		}
+
+
+		/**
+		 * 实现消息的同步发送
+		 */
+		@Test
+		public void testSendInSync() throws Exception {
+			Properties props = new Properties();
+			props.put("bootstrap.servers", "s102:9092");
+			//all:-1
+			//10000: 3,201,073,699
+			props.put("acks", "1");
+			props.put("retries", 0);
+			props.put("batch.size", 16384);
+			props.put("linger.ms", 0);
+			props.put("buffer.memory", 33554432);
+			props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+			props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+			Producer<String, String> producer = new KafkaProducer<String, String>(props);
+			long start = System.nanoTime();
+			for (int i = 0; i < 10000; i++) {
+				//异步
+				Future<RecordMetadata> future = producer.send(new ProducerRecord<String, String>("topic2", Integer.toString(i), "kkk" + i));
+				RecordMetadata md = future.get();
+				System.out.println(i);
+			}
+			producer.close();
+			System.out.println(System.nanoTime() - start);
+		}
+	}
+
+
+client发送消息到分区的算法
+----------------------------
+	partition(record, serializedKey, serializedValue, metadata.fetch());
+	算法:
+	若未指定分区号，则调用partitioner类partition方法。
+	分区策略:
+	1.record中指定了分区号，就使用该号。
+	2.分区未指定，key存在，按照key的hash值进行分区。
+		hash是使用的murmur32哈希算法实现。
+
+	3.没有分区，key不存在，轮询方式选择。
+		轮询顺序不一定是按照分区数递增，看cluster fetch回来的分区列表的索引顺序。
+
+消费者
+--------------------------
+	1.消费者组
+		消息只能由组中的一个消费者来消费。
+		将P2P和pub-sub模式进行了统一.
+		p2p		: 所有消费者位于同一组.
+		pub-sub	: 每个消费者自成一组.
+
+	2.消费偏移量
+		和消费者组关联的，
+
+	3.消费API
+		//改成main函数,单元测试有问题。
+		public  static void main(String[] args) throws Exception {
+			System.out.println("========consumer : ===============");
+			Properties props = new Properties();
+			props.put("bootstrap.servers", "s102:9092");
+			props.put("group.id", "g1");
+			//是否自动提交偏移量
+			props.put("enable.auto.commit", "true");
+			//自动提交偏移量周期
+			props.put("auto.commit.interval.ms", "1000");
+			//
+			props.put("session.timeout.ms", "30000");
+			//
+			props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+			props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+
+			final KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(props);
+			//订阅
+			consumer.subscribe(Arrays.asList("topic2"));
+
+			final ConsumerRecords<String, String> records = consumer.poll(100);
+
+			while (true) {
+				new Thread(){
+					public void run() {
+						for (ConsumerRecord<String, String> record : records) {
+							System.out.printf("offset = %d, key = %s, value = %s", record.offset(), record.key(), record.value());
+						}
+					}
+				}.start();
+
+			}
+		}
+
+
+消费者offset控制
+-----------------------
+	消费者消费消息偏移量提交，默认自动提交。
+	可以通过auto.commit.enable"="false"关闭自动提交。
+	手动提交通过ConsumerConnector.commitOffsets()方法。
+
+	Map<TopicAndPartition, OffsetAndMetadata> m0 = new HashMap<TopicAndPartition, OffsetAndMetadata>() ;
+	//构造主题分区对象
+	TopicAndPartition tp = new TopicAndPartition("topic2" , p) ;
+	//构造偏移量和元首
+	OffsetAndMetadata oam = OffsetAndMetadata.apply(9723) ;
+
+	//测试API
+	package com.it18zhang.kafka.test;
+
+	import kafka.common.OffsetAndMetadata;
+	import kafka.common.OffsetMetadata;
+	import kafka.common.TopicAndPartition;
+	import kafka.consumer.Consumer;
+	import kafka.consumer.ConsumerConfig;
+	import kafka.consumer.KafkaStream;
+	import kafka.javaapi.consumer.ConsumerConnector;
+	import kafka.message.MessageAndMetadata;
+	import org.apache.kafka.clients.consumer.ConsumerRecord;
+	import org.apache.kafka.clients.consumer.ConsumerRecords;
+	import org.apache.kafka.clients.consumer.KafkaConsumer;
+
+	import java.util.*;
+
+	/**
+	 * 消费者旧版API
+	 */
+	public class TestOldAPIConsumer {
+		public  static void main(String[] args)throws Exception {
+			//配置属性
+			Properties props = new Properties();
+			props.put("zookeeper.connect", "s102:2181");
+			props.put("group.id", "g1");
+			props.put("zookeeper.session.timeout.ms", "500");
+			props.put("zookeeper.sync.time.ms", "250");
+			//关闭自动提交
+			props.put("auto.commit.enable", "false");
+			props.put("auto.commit.interval.ms", "1000");
+			props.put("auto.offset.reset", "smallest");
+
+
+			//主题以及对应的消费线程数据
+			Map<String,Integer> topicCount = new HashMap<String, Integer>() ;
+			topicCount.put("topic2",5) ;
+
+			//创建消费者
+			final ConsumerConnector conn = Consumer.createJavaConsumerConnector(new ConsumerConfig(props));
+
+			//kafka消息流
+			Map<String, List<KafkaStream<byte[], byte[]>>> consumerStreams = conn.createMessageStreams(topicCount);
+
+			for(Map.Entry<String, List<KafkaStream<byte[], byte[]>>> entry : consumerStreams.entrySet()){
+				String topic = entry.getKey();
+				//每个主题下的消息流
+				List<KafkaStream<byte[], byte[]>> value = entry.getValue() ;
+				int index = 0 ;
+				for(final KafkaStream<byte[], byte[]> stream : value){
+					System.out.println("index = " + index );
+					new Thread(){
+						public void run() {
+							while (stream.iterator().hasNext()) {
+								String tname = Thread.currentThread().getName() ;
+								MessageAndMetadata mam = stream.iterator().next();
+								String t = mam.topic();
+								int p = mam.partition();
+								Object msg = mam.message();
+								Long off = mam.offset();
+								System.out.printf("%s,%s,%d,%s,%d\r\n", tname , t, p, new String((byte[]) msg), off);
+	//							conn.commitOffsets();
+
+								Map<TopicAndPartition, OffsetAndMetadata> m0 = new HashMap<TopicAndPartition, OffsetAndMetadata>() ;
+								//构造主题分区对象
+								TopicAndPartition tp = new TopicAndPartition("topic2" , p) ;
+								//构造偏移量和元首
+								OffsetAndMetadata oam = OffsetAndMetadata.apply(9723) ;
+								//构造map
+								m0.put(tp, oam) ;
+								//手动提交指定主题、分区的offset
+								conn.commitOffsets(m0,false);
+								System.out.println("");
+							}
+						}
+					}.start();
+					index ++ ;
+
+				}
+			}
+		}
+	}
+
+auto.offset.reset
+------------------------
+	[old version]
+	自动消费偏移量重置
+	largest
+	如果zk中offset没有初始值或者偏移量的值超出了范围。
+	smallest : 重置偏移量最小值
+	largest : 重置偏移量到最大值,默认值。
+
+	[new version]
+	earliest:			//最小值
+	latest:				//最大值,默认
+
+group.id
+------------------------
+	旧版和新班的subscribe方式使用该属性进行控制消费并发程度.
+
+	新版本还可以通过assign方法精确指定消费空间。
+
+	[Assign(新版)]
+	List<TopicPartition> list = new ArrayList<TopicPartition>() ;
+	list.add(new TopicPartition("topic3",1));
+	list.add(new TopicPartition("topic3",2));
+	//指定消费空间
+	consumer.assign(list);
+
+	[subscribe(新版)]
+	//必须指定组id，否则异常.
+	props.put("group.id", "g6");
+	consumer.subscribe(Arrays.asList("topic3"));
+
+	

@@ -1,0 +1,334 @@
+hbase
+--------------------
+	面向列(族)的数据库。
+	随机定位 + 实时读写。
+	NoSQL		//KEY-value
+	Key			//rowid/f:col/version
+	rowkey		//热点。
+				//加盐,随机加盐 | hash加盐。
+	协处理器。
+	Coprocessor，用于批处理。
+	1.Observer
+		类似于trigger.
+		RegionObserver
+		MasterObserver
+		WAlObserver
+
+	2.Endpoint
+		类似存储过程。
+		
+重新初始化hbase数据库
+----------------------
+	1.停止hbase集群
+	2.删除hdfs上的hbase目录
+	3.删除zk中的hbase目录
+	4.重启hbase集群
+
+rowkey原则
+--------------
+	1.长度原则
+		不要超过64K
+		等长
+		8字节倍数。
+		尽量短。
+
+	2.散列原则
+		避免热点
+		随机 | hash
+MR
+--------------
+	mapreduce.
+
+TextInputFormat
+Sequence
+KVText
+NLine
+Multi
+DBWritable
+
+
+hbase参与MR计算
+-------------------
+	1.作为数据源
+		数据从Hbase中提取，进行mr计算。
+		Configuration ;
+		conn.getTable(TableName.valueOf(""))
+		Scan scan = new Scan() ;
+		t.getScan(scan).;
+		t.getScanner().iterator();
+		Result
+
+		//指定表名
+		TableInputFormat.INPUT_TABLE
+		TableInputFormat.SCAN
+
+使用hbase实现word count的mr
+----------------------------
+	1.创建hbase表
+		create 'ns1:docs' , 'f1'
+	2.put数据到hbase的docs
+		put 'ns1:docs' ,'row1' ,  'f1:name' , 'hello world tom1'
+		...
+	3.创建Mapper
+		package com.it18zhang.hbase.mr;
+
+		import org.apache.hadoop.hbase.client.Result;
+		import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+		import org.apache.hadoop.hbase.util.Bytes;
+		import org.apache.hadoop.io.IntWritable;
+		import org.apache.hadoop.io.Text;
+		import org.apache.hadoop.mapreduce.Mapper;
+
+		import java.io.IOException;
+
+		/**
+		 * Mapper
+		 */
+		public class WordCountMapper extends Mapper<ImmutableBytesWritable, Result,Text,IntWritable>{
+			protected void map(ImmutableBytesWritable key, Result value, Context context) throws IOException, InterruptedException {
+				String line = Bytes.toString(value.getValue(Bytes.toBytes("f1") , Bytes.toBytes("line"))) ;
+				String[] arr = line.split(" ");
+				for(String word : arr){
+					context.write(new Text(word) , new IntWritable(1));
+				}
+			}
+		}
+
+	4.reduce
+		package com.it18zhang.hbase.mr;
+
+		import org.apache.hadoop.io.IntWritable;
+		import org.apache.hadoop.io.Text;
+		import org.apache.hadoop.mapreduce.Reducer;
+
+		import java.io.IOException;
+
+		/**
+		 *
+		 */
+		public class WordCountReducer extends Reducer<Text,IntWritable, Text, IntWritable>{
+			protected void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+				int count = 0 ;
+				for(IntWritable i : values){
+					count = count + i.get() ;
+				}
+				context.write(key,new IntWritable(count));
+			}
+		}
+
+	5.App
+		package com.it18zhang.hbase.mr;
+
+		import org.apache.hadoop.conf.Configuration;
+		import org.apache.hadoop.fs.Path;
+		import org.apache.hadoop.hbase.HBaseConfiguration;
+		import org.apache.hadoop.hbase.mapreduce.TableInputFormat;
+		import org.apache.hadoop.io.IntWritable;
+		import org.apache.hadoop.io.Text;
+		import org.apache.hadoop.mapreduce.Job;
+		import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+		import java.io.IOException;
+
+		/**
+		 * Created by Administrator on 2018/1/28.
+		 */
+		public class App {
+			public static void main(String[] args) throws Exception {
+				Configuration conf = HBaseConfiguration.create();
+
+				Job job = Job.getInstance(conf) ;
+				job.setJobName("hbase WC");
+				job.setJarByClass(App.class);
+
+				//设置输入
+				job.setInputFormatClass(TableInputFormat.class);
+				job.getConfiguration().set(TableInputFormat.INPUT_TABLE,"ns1:docs");
+				job.getConfiguration().set(TableInputFormat.SCAN_ROW_START,"row2");
+				job.getConfiguration().set(TableInputFormat.SCAN_ROW_STOP,"row4");
+
+				FileOutputFormat.setOutputPath(job,new Path("file:///d:/mr/hbase/out"));
+
+				job.setMapperClass(WordCountMapper.class);
+				job.setReducerClass(WordCountReducer.class);
+
+				job.setOutputKeyClass(Text.class);
+				job.setOutputValueClass(IntWritable.class);
+
+				job.setNumReduceTasks(2);
+
+				job.waitForCompletion(true) ;
+
+			}
+		}
+
+
+Hbase作为输出
+----------------------
+	1.改造Rereducer
+		package com.it18zhang.hbase.mr;
+
+		import org.apache.hadoop.hbase.client.Put;
+		import org.apache.hadoop.hbase.util.Bytes;
+		import org.apache.hadoop.io.IntWritable;
+		import org.apache.hadoop.io.NullWritable;
+		import org.apache.hadoop.io.Text;
+		import org.apache.hadoop.mapreduce.Reducer;
+
+		import java.io.IOException;
+
+		/**
+		 *
+		 */
+		public class WordCountReducer extends Reducer<Text,IntWritable, NullWritable, Put>{
+			protected void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+				int count = 0 ;
+				for(IntWritable i : values){
+					count = count + i.get() ;
+				}
+				Put put = new Put(Bytes.toBytes(key.toString())) ;
+				put.addColumn(Bytes.toBytes("f1") , Bytes.toBytes("cnt"),Bytes.toBytes(count)) ;
+				context.write(NullWritable.get(),put);
+			}
+		}
+
+	2.App配置
+		package com.it18zhang.hbase.mr;
+
+		import org.apache.hadoop.conf.Configuration;
+		import org.apache.hadoop.fs.Path;
+		import org.apache.hadoop.hbase.HBaseConfiguration;
+		import org.apache.hadoop.hbase.client.Put;
+		import org.apache.hadoop.hbase.mapreduce.TableInputFormat;
+		import org.apache.hadoop.hbase.mapreduce.TableOutputFormat;
+		import org.apache.hadoop.io.IntWritable;
+		import org.apache.hadoop.io.NullWritable;
+		import org.apache.hadoop.io.Text;
+		import org.apache.hadoop.mapreduce.Job;
+		import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+		/**
+		 * Created by Administrator on 2018/1/28.
+		 */
+		public class App {
+			public static void main(String[] args) throws Exception {
+				Configuration conf = HBaseConfiguration.create();
+
+				Job job = Job.getInstance(conf) ;
+				job.setJobName("hbase WC");
+				job.setJarByClass(App.class);
+
+				//设置输入
+				job.setInputFormatClass(TableInputFormat.class);
+				job.getConfiguration().set(TableInputFormat.INPUT_TABLE,"ns1:docs");
+				job.getConfiguration().set(TableInputFormat.SCAN_ROW_START,"row2");
+				job.getConfiguration().set(TableInputFormat.SCAN_ROW_STOP,"row4");
+
+				//输出格式
+				job.setOutputFormatClass(TableOutputFormat.class);
+				job.getConfiguration().set(TableOutputFormat.OUTPUT_TABLE, "ns1:wcres");
+				job.getConfiguration().set(TableOutputFormat.QUORUM_ADDRESS, "s102:2181:/hbase");
+
+				job.setMapperClass(WordCountMapper.class);
+				job.setReducerClass(WordCountReducer.class);
+
+				job.setMapOutputKeyClass(Text.class);
+				job.setMapOutputValueClass(IntWritable.class);
+
+				job.setOutputKeyClass(NullWritable.class);
+				job.setOutputValueClass(Put.class);
+
+				job.setNumReduceTasks(2);
+
+				job.waitForCompletion(true) ;
+
+			}
+		}
+
+	3.运行。
+
+yarn上以集群模式运行MR
+------------------------
+	1.保留resources下的hbase-site.xml文件.
+
+	1'.在hadoop的etc/hadoop/常见hbase-site.xml文件软连接即可。只要s101节点处理即可。
+		
+
+	2.导出jar到centos下.
+
+	3.启动yarn
+		$>start-yarn.sh
+
+	4.复制hbase/lib/所有hbase的包到hadoop/shared/hadoop/tool/lib
+		hbase-annotations-1.2.6.jar
+		hbase-client-1.2.6.jar
+		hbase-common-1.2.6.jar
+		hbase-examples-1.2.6.jar
+		hbase-external-blockcache-1.2.6.jar
+		hbase-hadoop2-compat-1.2.6.jar
+		hbase-hadoop-compat-1.2.6.jar
+		hbase-it-1.2.6.jar
+		hbase-prefix-tree-1.2.6.jar
+		hbase-procedure-1.2.6.jar
+		hbase-protocol-1.2.6.jar
+		hbase-resource-bundle-1.2.6.jar
+		hbase-rest-1.2.6.jar
+		hbase-server-1.2.6.jar
+		hbase-shell-1.2.6.jar
+		hbase-thrift-1.2.6.jar
+		metrics-core-xxx.jar				//注意该包也需要
+
+		$>cd /soft/hbase/lib
+		$>ls | grep 'hbase\|metrics' | grep -v test | grep my-hbase | cp `xargs` /soft/hadoop/share/hadoop/common/lib
+
+		$>cd /soft/hadoop/share/hadoop/tools
+		$>xsync.sh lib
+	
+	5.执行hadoop jar命令
+		进入s102主机。
+		$>cd ~/downloads
+		$>hadoop jar my-hbase.jar com.it18zhang.hbase.mr.App
+		
+ hbase数据迁移
+ --------------------
+	1.在hbase集群间转移数据
+		bulkload
+		hbase-server-1.2.6.jar completebulkload -conf ~/my-hbase-site.xml /user/larsgeorge/myoutput mytable
+
+	2.下载hdfs上hbase的区域一级目录到本地。
+		$>hdfs dfs -get /hbase/data/ns1/docs/acc83ab4d6cc3e0522b5f71206b62b38
+
+	3.上传本地的下载目录到cluster2的hdfs上
+		$>hdfs dfs -put acc83ab4d6cc3e0522b5f71206b62b38 /user/centos/
+
+	4.使用bulkload导入
+		不需要创建目标表。
+		$>hadoop jar hbase-server-1.2.6.jar completebulkload -conf ~/my-hbase-site.xml /user/centos/fb6454b73b36fc0c522c5a7c415b9700 ns1:docs2
+
+
+hive操纵hbase的数据
+-----------------------
+	1.原理介绍
+		在hbase创建外部表映射到hbase中的表，主要使用使用特定的hbase存储处理器。
+	2.实操
+		2.1)创建hbase表
+			create 'ns1:t1' , 'f1'
+
+		2.2)在hive中创建外部表，使用HbaseStoregeHandler映射到hbase的表。
+			/***********************************************
+			 ****                                         **
+			 ****hbase1.2.4 int型字段需要加#b后缀映射     **
+			 ****hbase1.2.6不需要，直接映射即可。         **
+			 ****                                         **
+			 *********************************************** /
+			create external table ns1_t1_in_hbase(
+			rowid string , id int, name string,age int
+			)
+			STORED BY 'org.apache.hadoop.hive.hbase.HBaseStorageHandler'
+			WITH SERDEPROPERTIES ("hbase.columns.mapping" = ":key,f1:id,f1:name,f1:age")
+			TBLPROPERTIES ("hbase.table.name" = "ns1:t1");
+
+		2.3)常规的Hive的SQL操作。
+			$hive>select * from ns1_t1_in_hbase ;
+			$hive>select age , count(*) cnt from ns1_t1_in_hbase group by order by cnt desc ;
+			$hive>insert into ns1_t1_in_hbase values('row3' , 3, 'tomasLee' , 14) ;

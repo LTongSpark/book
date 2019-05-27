@@ -1,0 +1,570 @@
+spark
+-----------------
+	shuffleManager.
+	SortShuffleManager.
+	registerHandle(){
+		...
+	}
+
+	RDD{
+		ShuffleRDD.shuffleDep.handle = shuffleManager.registerHandle();
+	}
+
+	[ShuffleHandle]
+		1.BypassMergeSortShuffleHandle
+			绕过MergeSort
+			map端没有combine
+			partitions < (bypassThreshhold,200)
+			
+			-->BypassMergeSortShuffleWriter
+				采用hash方式进行shuffle，每个分区对应一个文件，不缓存。map合并成一个输出文件。
+
+		2.SerializeShuffleHandle
+			串行化shuffle
+			//kryo
+			Serializer.supportRelocation(serialObj) ;
+			map端也没有combine
+			分区个数 < 16M
+
+			-->UnsafeShuffleWriter
+				kv -> SerilizeObj(二进制比较) -> buf ->排序 -> 系统内核页面。
+
+
+		3.BaseShuffleHandle
+			基本Shuffle。
+			
+			-->SortShuffleWriter
+				kv ->内存(AppendOnlyMap(mapCombine) | Buffer(no mapcombine))
+						
+Spark内存管理
+-----------------
+	
+	1.静态内存管理
+		存储内存和执行时相互独立的内存区。互相不能借用。
+
+	2.统一内存管理
+		1.保留内存
+			300m
+			可调可观。
+		2.用户内存
+			0.4 * (heap - 300M)
+
+		3.spark内存
+			0.6 * (heap - 300m)
+			3.1)存储内存
+				50%
+			3.2)执行内存
+				50%
+		4.执行内存借了不还，
+		
+		5.内部使用内存池进行管理
+			内存池内部维护了内存使用的计数器。
+
+broadcast
+----------------
+	spark实现广播使用类似BT的技术。减少网络负载。(广播大型变量)
+	RDD
+
+
+Accumulator
+----------------
+	累加器，辅助手段。
+
+
+spark模块
+---------------
+	1.spark core
+		rdd
+
+	2.spark sql
+
+	3.spark streaming
+
+	4.spark mllib
+	5.spark graph
+
+
+
+Spark SQL模块
+------------------
+	DataFrame,
+	引入spark-sql依赖。
+	DataFrame是特殊的DataSet,DataSet[Row].
+	
+	1.集成hive
+		0.说明
+			spark sql操纵hive，使用spark作为执行引擎。只是从hdfs上读取hive的数据，放到spark上执行。
+
+		1.整合步骤
+			复制hive的hive-site.xml文件到spark conf目录下。
+			复制mysql的驱动到spark/jars/下
+		
+		2.启动zk，hdfs。
+			
+		3.启动spark集群
+			$>spark/sbin/start-all.sh
+		
+		4.进入spark-shell
+			$>spark-shell --master spark://s101:7077
+			$scala>spark.sql("select * from mydb.custs").show()
+
+
+	2.编程实现spark sql的hive访问
+		2.1)scala版
+			a)复制hive-site.xml + core-site.xml + hdfs-site.xml到resources目录下
+				
+			b)添加maven支持
+				<?xml version="1.0" encoding="UTF-8"?>
+				<project xmlns="http://maven.apache.org/POM/4.0.0"
+						 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+						 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+					<modelVersion>4.0.0</modelVersion>
+
+					<groupId>com.it18zhang</groupId>
+					<artifactId>my-spark</artifactId>
+					<version>1.0-SNAPSHOT</version>
+
+					<dependencies>
+						<dependency>
+							<groupId>org.apache.spark</groupId>
+							<artifactId>spark-core_2.11</artifactId>
+							<version>2.1.0</version>
+						</dependency>
+						<dependency>
+							<groupId>org.apache.spark</groupId>
+							<artifactId>spark-sql_2.11</artifactId>
+							<version>2.1.0</version>
+						</dependency>
+						<dependency>
+							<groupId>com.alibaba</groupId>
+							<artifactId>fastjson</artifactId>
+							<version>1.2.24</version>
+						</dependency>
+						<dependency>
+							<groupId>mysql</groupId>
+							<artifactId>mysql-connector-java</artifactId>
+							<version>5.1.17</version>
+						</dependency>
+						<!--*************************************************-->
+						<!--****** 注意：一定要引入该依赖，否则hive不好使****-->
+						<!--*************************************************-->
+						<dependency>
+							<groupId>org.apache.spark</groupId>
+							<artifactId>spark-hive_2.11</artifactId>
+							<version>2.1.0</version>
+						</dependency>
+					</dependencies>
+				</project>
+
+			d)编程
+				val conf = new SparkConf()
+				conf.setAppName("SparkSQLScala")
+				conf.setMaster("local")
+				conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse")
+
+				//启用hive支持
+				val sess = SparkSession.builder()
+									.config(conf)
+									.enableHiveSupport()	//一定要启用hive支持。
+									.getOrCreate()
+				import sess._
+				sess.sql("select * from mydb.custs").show()
+
+		2.2)java版
+			import org.apache.spark.SparkConf;
+			import org.apache.spark.sql.Dataset;
+			import org.apache.spark.sql.Row;
+			import org.apache.spark.sql.SparkSession;
+
+			/**
+			 *
+			 */
+			public class MySparkSQLJava {
+				public static void main(String[] args) {
+					SparkConf conf = new SparkConf();
+					conf.setAppName("MySparkSQLJava");
+					conf.setMaster("local[*]") ;
+					conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse") ;
+
+					SparkSession sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate();
+					Dataset<Row> df = sess.sql("select * from mydb.custs") ;
+					df.show();
+				}
+			}
+
+spark sql操纵list集合(scala版)
+------------------------------
+	import org.apache.spark.SparkConf
+	import org.apache.spark.sql.types.{DataType, DataTypes, StructField, StructType}
+	import org.apache.spark.sql.{Row, SparkSession}
+
+	/**
+	  */
+	object MySparkSQLScalaList {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("SparkSQLScala")
+			conf.setMaster("local")
+			conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse")
+
+			//启用hive支持
+			val sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate()
+
+			import scala.collection.JavaConversions._
+			//构造集合
+			val list :java.util.List[Row] = List(
+				Row(1, "tom", 12),
+				Row(2, "tomas", 13),
+				Row(3, "tomasLee", 14),
+				Row(4, "tomson", 15),
+				Row(5, "tom2", 16)) ;
+
+			//定义每条记录(row)的数据结构
+			val schema = StructType(List[StructField](
+				StructField("id" ,DataTypes.IntegerType,false) ,
+				StructField("name" ,DataTypes.StringType,true) ,
+				StructField("age" ,DataTypes.IntegerType,true)
+			))
+			val df = sess.createDataFrame(list , schema)
+			//将list注册成临时表
+			df.createOrReplaceTempView("_cust")
+
+			val df2 = sess.sql("select id,name from _cust");
+			df2.createOrReplaceTempView("_subcust");
+			sess.sql("select * from _subcust where id < 3").show()
+		}
+	}
+
+spark sql操纵RDD集合(scala版)
+-------------------------------
+	import org.apache.spark.SparkConf
+	import org.apache.spark.sql.types.{DataTypes, StructField, StructType}
+	import org.apache.spark.sql.{Row, SparkSession}
+
+	/**
+	  */
+	object MySparkSQLScalaRDD {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("SparkSQLScala")
+			conf.setMaster("local")
+			conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse")
+
+			//启用hive支持
+			val sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate()
+
+			//1.通过sc加载文本形成rdd
+			val rdd1 = sess.sparkContext.textFile("file:///d:/java/custs.txt")
+			//2.变换rdd[String] -> RDD[Row]
+			val rdd2 = rdd1.map(e=>{
+				val arr = e.split(",")
+				Row(arr(0).toInt , arr(1),arr(2).toInt)
+			})
+
+			//3.定义数据结构
+			val schema = StructType(
+				List(
+					StructField("id" , DataTypes.IntegerType,false) ,
+					StructField("name" , DataTypes.StringType,true) ,
+					StructField("age" , DataTypes.IntegerType,true)
+				)
+			)
+
+			//将rdd转换成dataFrame
+			val df = sess.createDataFrame(rdd2 , schema)
+			df.show()
+		}
+	}
+
+spark sql操纵List集合(java版)
+-------------------------------
+	import org.apache.spark.SparkConf;
+	import org.apache.spark.sql.*;
+	import org.apache.spark.sql.types.DataTypes;
+	import org.apache.spark.sql.types.Metadata;
+	import org.apache.spark.sql.types.StructField;
+	import org.apache.spark.sql.types.StructType;
+
+	import java.util.ArrayList;
+	import java.util.List;
+
+	/**
+	 *
+	 */
+	public class MySparkSQLJavaList {
+		public static void main(String[] args) {
+			SparkConf conf = new SparkConf();
+			conf.setAppName("MySparkSQLJava");
+			conf.setMaster("local[*]") ;
+			conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse") ;
+
+			//注意：需要指定启用hive支持。
+			SparkSession sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate();
+
+			//1.创建List集合
+			List<Row> list = new ArrayList<Row>();
+			list.add(RowFactory.create(1, "tom", 12)) ;
+			list.add(RowFactory.create(2, "tomas", 13)) ;
+			list.add(RowFactory.create(3, "tomasLee", 14)) ;
+			list.add(RowFactory.create(4, "tomson", 15)) ;
+
+			//2.数据结构
+			StructField[] fields = new StructField[3] ;
+			fields[0] = new StructField("id" , DataTypes.IntegerType , false, Metadata.empty()) ;
+			fields[1] = new StructField("name" , DataTypes.StringType, true, Metadata.empty()) ;
+			fields[2] = new StructField("age" , DataTypes.IntegerType , true, Metadata.empty()) ;
+			StructType type = new StructType(fields);
+
+			Dataset<Row> df1 = sess.createDataFrame(list , type) ;
+			df1.createOrReplaceTempView("_cust");
+			sess.sql("select name from _cust where id < 3").show();
+
+
+		}
+	}
+
+
+spark sql操纵RDD集合(java版)
+-------------------------------
+	import org.apache.spark.SparkConf;
+	import org.apache.spark.api.java.JavaRDD;
+	import org.apache.spark.api.java.function.Function;
+	import org.apache.spark.sql.Dataset;
+	import org.apache.spark.sql.Row;
+	import org.apache.spark.sql.RowFactory;
+	import org.apache.spark.sql.SparkSession;
+	import org.apache.spark.sql.types.DataTypes;
+	import org.apache.spark.sql.types.Metadata;
+	import org.apache.spark.sql.types.StructField;
+	import org.apache.spark.sql.types.StructType;
+
+	import java.util.ArrayList;
+	import java.util.List;
+
+	/**
+	 *
+	 */
+	public class MySparkSQLJavaRDD {
+		public static void main(String[] args) {
+			SparkConf conf = new SparkConf();
+			conf.setAppName("MySparkSQLJava");
+			conf.setMaster("local[*]") ;
+			conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse") ;
+
+			//注意：需要指定启用hive支持。
+			SparkSession sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate();
+
+			JavaRDD<String> rdd1 = sess.sparkContext().textFile("file:///d:/java/custs.txt" , 4).toJavaRDD() ;
+			JavaRDD<Row> rdd2 = rdd1.map(new Function<String, Row>() {
+				public Row call(String v1) throws Exception {
+					String[] arr = v1.split(",") ;
+					return RowFactory.create(Integer.parseInt(arr[0]),arr[1] , Integer.parseInt(arr[2]));
+				}
+			}) ;
+			//2.数据结构
+			StructField[] fields = new StructField[3] ;
+			fields[0] = new StructField("id" , DataTypes.IntegerType , false, Metadata.empty()) ;
+			fields[1] = new StructField("name" , DataTypes.StringType, true, Metadata.empty()) ;
+			fields[2] = new StructField("age" , DataTypes.IntegerType , true, Metadata.empty()) ;
+			StructType type = new StructType(fields);
+
+			Dataset<Row> df = sess.createDataFrame(rdd2 , type) ;
+			df.show(false);
+		}
+	}
+
+
+使用spark sql实现taggen(scala版)
+---------------------------------
+	import org.apache.spark.SparkConf
+	import org.apache.spark.sql.types.{DataTypes, StringType, StructField, StructType}
+	import org.apache.spark.sql.{Row, SparkSession}
+
+	/**
+	  */
+	object MySparkSQLScalaTaggen {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("SparkSQLScala")
+			conf.setMaster("local")
+			conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse")
+
+			//启用hive支持
+			val sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate()
+
+			//1.加载文件形成rdd
+			val rdd1 = sess.sparkContext.textFile("file:///d:/temptags.txt")
+			//2.变换过滤，去除无效行
+			val rdd2 = rdd1.map(_.split("\t")).filter(_.length > 1)
+			//3.json解析
+			val rdd3 = rdd2.map(arr=>(arr(0) , JSONUtil.parseTag(arr(1))))
+			//4.过滤，去除空评论
+			val rdd4 = rdd3.filter(t=>t._2.size() > 0)
+			//
+			val rdd44 = rdd4.map(t=>{
+				val busid = t._1
+				val list = t._2
+				var arr = new Array[String](list.size())
+				var i:Int = 0
+				import scala.collection.JavaConversions._
+				for(x <- list){
+					arr(i) = x
+					i +=1
+				}
+				(busid , arr)
+			})
+			//5.变换rdd成为rdd[Row]
+			val rdd5 = rdd44.map(t=>{
+				Row(t._1,t._2)
+			})
+
+			//6.数据结构定义
+			val mytype = StructType(List(
+				StructField("busid" , DataTypes.StringType,false) ,
+				StructField("tags" , DataTypes.createArrayType(DataTypes.StringType),false)
+			))
+			//7.创建数据框
+			val df = sess.createDataFrame(rdd5, mytype)
+			//8.注册临时表
+			df.createOrReplaceTempView("_tags")
+			//9.炸开tags字段
+			
+			//val df2 = sess.sql("select busid , explode(tags) tag from _tags")  //OK
+			//使用hive的横向视图完成炸裂数据的组合
+			val df2 = sess.sql("select busid , tag from _tags lateral view explode(tags) xx as tag")
+			//10.注册临时表
+			df2.createOrReplaceTempView("_tags2")
+			//11.统计每个商家每条评论的个数.
+			val sql1 = "select busid, tag , count(*) cnt from _tags2 group by busid , tag order by busid , cnt desc" ;
+			//12.聚合每个商家的所有评论,busid, List((tag,count),...,涉及子查询
+			//val sql2 = "select t.busid , collect_list(struct(t.tag , t.cnt)) st from (" + sql1 + ") as t group by t.busid order by st[0].col2 desc "
+			val sql2 = "select t.busid , collect_list(named_struct('tag' , t.tag , 'cnt' , t.cnt)) st from (" + sql1 + ") as t group by t.busid order by st[0].cnt desc "
+			sess.sql(sql2).show(10000, false)
+
+
+	//        val sql2 = "select t.busid , collect_list(named_struct('tag' , t.tag , 'cnt' , t.cnt)) st from (" + sql1 + ") as t group by t.busid "
+	//        sess.sql(sql2).createOrReplaceTempView("_tags3")
+	//        //13.对所有商家按照评论个数的最大值进行倒排序
+	//        val sql3 = "select * from _tags3 order by st[0].cnt desc"
+	//        sess.sql(sql3).show(10000,false)
+		}
+	}
+
+spark打印数据结构
+---------------------
+	df.printSchema()
+
+spark sql访问json文件加载df
+----------------------------
+
+	1.创建json文件
+		[d:/java/custs.json]
+		{"id":1,"name":"tom","age":12}
+		{"id":2,"name":"tomas","age":13}
+		{"id":3,"name":"tomasLee","age":14}
+		{"id":4,"name":"tomson","age":15}
+		{"id":5,"name":"tom2","age":16}
+	
+	2.加载文件[scala]
+        val conf = new SparkConf()
+        conf.setAppName("SparkSQLScala")
+        conf.setMaster("local")
+        conf.set("spark.sql.warehouse.dir", "hdfs://mycluster/user/hive/warehouse")
+
+        //启用hive支持
+        val sess = SparkSession.builder().config(conf).enableHiveSupport().getOrCreate()
+        val df = sess.read.json("file:///d:/java/custs.json")
+        df.show(1000,false)
+
+	3.[java]版
+		Dataset<Row> df = spark.read().json("file:///d:/java/custs.json");
+
+Spark sql DataFrame API编程
+----------------------------
+	DataFrame.select("id" , "name")
+	DataFrame.select($"id" , $"name")
+	DataFrame.where(" id > 3")
+	DataFrame.groupBy("id").agg(max("age"),min("age")) ;
+	...
+
+spark临时视图
+----------------------------
+	1.createOrReplaceTempView
+		生命周期仅限本session
+
+	2.createGlobalTempView
+		全局，跨session.
+	
+
+Spark sql的数据保存
+---------------------------
+	1.parquet
+		df.write.parquet("file:///d:/java/par")
+
+	2.json
+		df.where("id < 4").write.mode(SaveMode.Append).json("file:///d:/java/json")
+
+	3.保存到hive表
+		sess.sql("create table ttt as select * from temp").show()
+
+	4.mysql
+		val url = "jdbc:mysql://localhost:3306/big9"
+        val table = "customers"
+        val prop = new Properties()
+        prop.setProperty("user","root")
+        prop.setProperty("password","root")
+        prop.setProperty("driver","com.mysql.jdbc.Driver")
+        val df = sess.read.jdbc(url,table,prop)
+        df.where("id < 13").write.jdbc(url, "ttt" , prop)
+		
+
+spark sql文件格式的读取
+-------------------------
+	1.json
+		//目录也可以
+		val df = sess.read.json("file:///d:/java/json")
+
+	2.parquet
+		val df = sess.read.parquet("file:///d:/java/par")
+
+	3.读取hive
+		spark.sql("select * from mydb.custs").show()
+
+	4.mysql
+		val url = "jdbc:mysql://localhost:3306/big9"
+        val table = "customers"
+        val prop = new Properties()
+        prop.setProperty("user","root")
+        prop.setProperty("password","root")
+        prop.setProperty("driver","com.mysql.jdbc.Driver")
+        val df = sess.write.jdbc(url,table,prop)
+        df.show()
+		
+
+
+Spark SQL作为分布式查询引擎
+----------------------------
+	1.描述
+		终端用户/应用程序可以直接同spark sql交互，而不需要写其他代码。
+	2.启动spark的thrift-server进程
+		spark/sbin/start-thrift-server --master spark://s101:7077 
+	3.检测
+		a)webui
+		b)端口
+			netstat -anop|grep 10000
+
+	4.使用spark的beeline程序测试
+		$>spark/bin/beeline
+		$beeline>!conn jdbc:hive2://s101:10000/mydb
+		$beeline>select * from customers ;
+
+		
+练习:
+------------------
+	1.custs + orders外联查询。
+	2.使用spark sql实现taggen.
+		
+
+		[java]
+			需要完成!!!!
+

@@ -1,0 +1,666 @@
+RDBMS
+-------------
+	relation database management system.
+	关系型数据库管理系统。
+	低延迟
+	事务保证
+	OLTP			//online transaction process,
+
+hive
+-------------
+	数据仓库。
+	OLAP			//online analyze process,
+					//延迟高，
+					//有限支持
+					//统计分析函数
+	构建在hadoop之上数仓。
+	元数据(metastore)存放于关系型数据库中(mysql,默认存放在derby数据库)。
+	SQL(HQL)方式操纵MR.
+	MR : 
+	select ... from ... where ... group by ... having ... order by .. limit ;
+	
+	内部表			//
+	外部表			//external
+
+
+	分区表			//
+
+加载数据
+-------------
+	load data [local] inpath '...' into table custs ;
+
+
+hiveserver2
+-------------
+	远程使用jdbc方式访问hive。
+
+schematool -dbType mysql -initSchema
+
+beeline
+-------------
+	hiveserver2客户端命令行工具，类似于mysql的命令行。
+
+创建表语句
+------------
+	CREATE external TABLE employee
+	(
+		name string,
+		arr ARRAY<string>,
+		struc STRUCT<sex:string,age:int>,
+		map1 MAP<string,int>,
+		map2 MAP<string,ARRAY<string>>
+	)
+	ROW FORMAT DELIMITED
+	FIELDS TERMINATED BY '|'
+	COLLECTION ITEMS TERMINATED BY ','
+	MAP KEYS TERMINATED BY ':'
+	LINES TERMINATED BY '\n'
+	STORED AS TEXTFILE;
+
+分区表
+--------------
+	分区对应目录。
+
+bucket
+--------------
+	1.介绍
+		桶,对应的是文件。按照指定的字段划分每条记录的存放位置。
+		擅长单条记录的检索，因为通过id进行分桶定位。
+		load data命令无法将数据放入指定的桶里。
+
+	2.创建桶表
+		CREATE TABLE buck
+		(
+		id int,
+		name string ,
+		age int
+		)
+		CLUSTERED BY (id) INTO 3 BUCKETS
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY ','
+		LINES TERMINATED BY '\n'
+		STORED AS TEXTFILE;
+
+	3.桶的数量的界定
+		1t = 1204G = 1024 * 1024M = 4000
+		原则上保证每个桶的数据量是2 * blocksize(128M)。
+
+连接查询
+-----------------
+	1.map端连接
+		//已经是map端连接了。
+		select a.*,b.* from custs a left outer join orders b on a.id = b.cid ;
+
+		//使用连接暗示实现map端连接
+		SELECT /*+ MAPJOIN(custs) */ c.* FROM custs c CROSS JOIN orders o ;
+
+		//设置自动map连接转换
+		$hive>set hive.auto.convert.join=false ;
+		SELECT c.*,o.* FROM custs c CROSS JOIN orders o ;					//reduce端连接
+
+
+hive的执行方式
+----------------------
+	1.直接执行sql
+		hive -e "select * from mydb.custs"
+
+	2.执行hive的脚本
+		//创建脚本文件
+		[hive.hql]
+		use mydb ;
+		select * from custs ;
+		
+		//执行脚本
+		hive -f hive.hql
+
+导入导出hive数据
+------------------------
+	导入时，如果是内部表，则不能存在。如果是外部表，可以指定表名称.
+	//导出hive表到hdfs，包含表结构和数据
+	$hive>export table mydb.custs to '/user/centos/custs.dat'
+	//导出hive中的分区表到hdfs
+	$hive>export table par partition(prov='hebei',city='baoding') to '/user/centos/par0.dat'
+
+	//导入表,如果存在表，抛异常
+	$hive>use mydb2 ;
+	$hive>import from '/user/centos/custs' ;
+	
+	//导入分区表
+	$hive>import external table par from '/user/centos/par0.dat' ;
+
+设置hive的强制性约束
+------------------------
+	1.大型查询的严格检查模式
+		//结合其他属性生效。
+		$hive>set hive.strict.checks.large.query=false			//默认false
+		
+		//查询属性
+		$hive>set hive.mapred.mode ;							//不用特定值是查询
+		//不推荐.但是可以使用的
+		$hive>set hive.mapred.mode=strict | nonstrict			//严格|非严格
+		$hive>select * from orders order by price limit 10;		//严格模式下，全排序必须指定limit
+		$hive>select * from par	where prov='hebei' ;			//严格模式下，分区表查询必须进行分区过滤
+
+
+排序
+---------------------------
+	1.order
+		通过一个reduce实现数据的全排序.
+
+		select * from orders order by price desc ;				//全排序
+
+	2.sort
+		部分排序，在map端执行的。等价于排序对比器。
+		set hive.auto.convert.join=true ;
+		set mapreduce.input.fileinputformat.split.minsize=70 ;
+		set mapreduce.input.fileinputformat.split.maxsize=70 ;
+		set mapreduce.job.reduces=2 ;
+		
+		//
+		create table res as SELECT a.id aid,a.name aname,b.id bid,b.price bprice FROM custs a left outer JOIN orders b on a.id = b.cid sort by aname desc;
+		//
+		select * from orders sort by id desc ;					//转成mr，对reduce内部按照id进行降序排序。
+
+	3.distribute by
+		分发，控制分区过程，按照指定字段分区，单独使用不保证reduce
+		数据有序的，和sort by组合使用，必须位于Sort by之前.
+		create table res2 as select * from orders distribute by cid sort by id desc ;
+		
+		//使用case when then end控制分区字段
+		create table res3  as select * from orders distribute by case when cid < 3 then 0 else 1 end sort by id desc ;
+
+	4.cluster by
+		快捷方式，等价于distribute by a sort by a ;
+		不支持desc 和 asc。
+		select * from orders clutser by id ;
+
+函数
+----------------
+	show functions ;											--显式所有函数
+	desc function [extended] rand ;								--显式指定函数的帮助
+	select size(arr) from emp ;									--size()访问集合的size
+	select array_contains(arr  , 'New York) from emp ;			--数组是否包含指定元素
+
+	select array(1,2,3) ;										--构造数组函数
+	select map(1,'tom',2,'tomas',3,'tomasLee') ;				--构造数组函数
+	select struct(1,'tom',12);									--构造匿名结构体函数
+	select named_struct('id',1,'name','tom','age' , 12);		--访问带名结构体
+
+	--时间函数
+	select current_date();										--当前日期 yyyy-MM-dd
+	select current_timestmap();									--当前日期 yyyy-MM-dd HH:mm:ss.SSS
+	select date_format(current_date() , 'yyyy/MM');				--格式化日期函数
+	select date_format(current_timestamp() , 'yyyy/MM');		--格式化日期函数
+	select date_format('2019-12-12', 'yyyy/MM');				--格式化日期串
+
+	--时间转换
+	--时间戳转换成秒。bigint
+	select cast(current_timestamp() as bigint) ;
+
+	--时间戳转换成double，放大1000倍变毫秒，转换成长整数。
+	select cast(cast(current_timestamp() as double) * 1000 as bigint);
+
+	--时间转换成时间戳,时分秒是00.
+	select cast(curennt_date as timestamp) ;
+
+	--毫秒转换成timestamp
+	select cast(1516334064508 as timestamp) ;
+	--取出毫秒数对应时间串
+	select date_format(cast(1516334064508 as timestamp), 'yyyy/MM/dd') ;
+
+	--LATERAL VIEW通常和UDTF(explode())配合使用，
+	--错误，udtf不支持该操作。
+	select name,explode(arr) from emp ;							
+
+	--操纵arr
+	select name,x from emp LATERAL VIEW explode(arr) xx AS x;
+
+	--操纵map和arr
+	select name,x ,k,v from emp LATERAL VIEW explode(arr) xx AS x LATERAL VIEW explode(map1) yy AS k,v ;
+
+	--不忽略explode返回值为null的行
+	select name,x ,k,v from emp LATERAL VIEW outer explode(arr) xx AS x LATERAL VIEW explode(map1) yy AS k,v ;
+
+	--反向函数
+	select reverse('hello world') ;
+
+	--收集值并去重
+	select collect_set(cid) from orders ;
+
+	--收集值不去重
+	select collect_list(cid) from orders ;
+
+hive虚列(伪列，内置列)
+-----------------------
+	--查看每行对应哪个文件
+	select INPUT__FILE__NAME from emp ;
+
+	--查询行首块偏移量
+	select BLOCK__OFFSET__INSIDE__FILE  from emp ;
+
+	--判null函数
+	select isnull(name) from emp ;
+	select !isnull(name) from emp ;
+	select isnotnull(name) from emp ;
+
+	--断言函数,如果断言失败，抛出异常
+	select assert_true(name is not null) from emp ;
+
+	--提取指定的第n个string
+	select elt(1,'abc','def','xyz') ;
+
+事务
+--------------------
+	0.13.0之后提供的行级事务。
+	事务都是自动提交的。
+	要求：orc文件格式+桶表。（必须的条件）
+	启用事务，需要开启如下属性：
+	SET hive.support.concurrency = true;
+	SET hive.enforce.bucketing = true;
+	SET hive.exec.dynamic.partition.mode = nonstrict;
+	SET hive.txn.manager = org.apache.hadoop.hive.ql.lockmgr.DbTxnManager;
+	SET hive.compactor.initiator.on = true;
+	SET hive.compactor.worker.threads = 1;
+
+	--显式开启和中断的事务
+	show transactions ;
+
+	--创建新桶表，使用orc格式同时还要启用事务属性。
+	create table tx(id int ,name string ) clustered by (id) into 2 buckets stored as orc TBLPROPERTIES('transactional'='true');
+
+	--更新
+	update tx set name = 'tomas' ;
+
+	
+聚合与采样
+-------------------
+	--基本聚合 max min avg count sum
+	select count(1) from orders ;
+		
+	--if函数，相当于java三元运算符:a==b? 'x':'y'
+	select name , if(struc.age < 30 , 'small' , 'big') from emp ;
+
+	--启用map端聚合，相当于combine
+	SET hive.map.aggr=true;
+
+	--高级聚合函数
+	--grouping sets,对多种条件组合进行聚合，通过一次job执行输出结果。
+	select count(1) from orders group by cid , price grouping sets(cid , price) ;
+	
+	--rollup
+	--从条件最多的组合开始统计，每次将最后一个条件去除直到为空。
+	select ... from ... GROUP BY a,b,c WITH ROLLUP ;
+	select ... from ... GROUP BY a,b,c GROUPING SETS ((a,b,c),(a,b),(a),())
+	
+	--mysql支持rollup操作
+	$mysql>select cid, price ,count(1) from orders group by cid ,price with rollup ;
+
+	--rollup
+	select cid,price,count(1) from orders GROUP BY cid,price with rollup ;
+	select cid,price,count(1) from orders GROUP BY cid,price GROUPING SETS ((cid,price),(cid),())
+
+	--cube
+	--
+	select cid,price,count(1) from orders GROUP BY cid,price with cube ;
+	select cid,price,count(1) from orders GROUP BY cid,price GROUPING SETS ((cid,price),(cid),(price),())
+
+分析函数
+------------
+	0.介绍
+		常规聚合行数，计算出来一个结果，只有一行数据。
+		分析函数产生统计结果，但是和每一行联合输出。输出多行数据。
+
+	1.准备表
+		CREATE TABLE IF NOT EXISTS emp_ct
+		(
+		name string,
+		dept_num int,
+		salary int
+		)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY '|'
+		STORED AS TEXTFILE;
+
+	2.准备数据
+		[emp_ct.txt]
+		Will|1000|4000
+		Will|1000|4000
+		Michael|1000|5000
+		Lucy|1000|5500
+		Steven|1000|6400
+		Lily|1001|5000
+		Jess|1001|6000
+		Mike|1001|6400
+		Yun|1002|5500
+		Wei|1002|7000
+		Richard|1002|8000		
+	3.加载数据
+		$hive>load data local inpath '/home/centos/emp_ct.txt' into table emp_ct ;
+
+	4.分析行数
+		RANK
+		NTILE
+		DENSE_RANK
+		CUME_DIST
+		PERCENT_RANK
+		LEAD
+		LAG
+		ROW_NUMBER
+
+		//start_expr:	UNBOUNDED PRECEDING（前）,第一行
+						CURRENT ROW			,当前行
+						N PRECEDING			,前数n行
+						N FOLLOWING			,后数n行
+
+		//end_expr:	    UNBOUNDED FOLLOWING	,最后行
+						CURRENT ROW			,当前行
+						N PRECEDING			,前数n行
+						N FOLLOWING			,后数n行
+		ROWS BETWEEN <start_expr> AND <end_expr>  在两者之间进行选择
+
+		--分析函数中使用常规聚合函数
+		SELECT name, dept_num, salary ,COUNT(*) OVER (PARTITION BY dept_num) AS row_cnt from emp_ct ;
+								Steven	1000	6400	5
+								Lucy	1000	5500	5
+								Michael	1000	5000	5
+								Will	1000	4000	5
+								Will	1000	4000	5
+								Mike	1001	6400	3
+								Jess	1001	6000	3
+								Lily	1001	5000	3
+								Richard	1002	8000	3
+								Wei	1002	7000	3
+								Yun	1002	5500	3
+		--对部分分区并排序,只对分区内的数据进行累加求和。
+		SELECT name, dept_num, salary ,SUM(salary) OVER(PARTITION BY dept_num ORDER BY dept_num) AS t1 from emp_ct ;
+							Steven	1000	6400	24900
+							Lucy	1000	5500	24900
+							Michael	1000	5000	24900
+							Will	1000	4000	24900
+							Will	1000	4000	24900
+							Mike	1001	6400	17400
+							Jess	1001	6000	17400
+							Lily	1001	5000	17400
+							Richard	1002	8000	20500
+							Wei	1002	7000	20500
+							Yun	1002	5500	20500		
+		--对部门排序，累加每个部分的工资总和，后续的统计会包含之前的计算总额。
+		SELECT name, dept_num, salary , SUM(salary) OVER(ORDER BY dept_num) as t2 from emp_ct ;
+							Steven	1000	6400	24900
+							Lucy	1000	5500	24900
+							Michael	1000	5000	24900
+							Will	1000	4000	24900
+							Will	1000	4000	24900
+							Mike	1001	6400	42300
+							Jess	1001	6000	42300
+							Lily	1001	5000	42300
+							Richard	1002	8000	62800
+							Yun	1002	5500	62800
+							Wei	1002	7000	62800
+		--不进行分区，对所有数据进行排序处理。
+		SELECT name, dept_num, salary ,  SUM(salary) OVER(ORDER BY dept_num, name rows unbounded preceding) AS t3 from emp_ct ;
+
+							Lucy	1000	5500	5500
+							Michael	1000	5000	10500
+							Steven	1000	6400	16900
+							Will	1000	4000	20900
+							Will	1000	4000	24900
+							Jess	1001	6000	30900
+							Lily	1001	5000	35900
+							Mike	1001	6400	42300
+							Richard	1002	8000	50300
+							Wei	1002	7000	57300
+							Yun	1002	5500	62800
+		--rank,常规排名，对部门分区，在分区内对salary排序，计算统计排名(并列第一  有并列的数据)
+		SELECT name, dept_num, salary ,  RANK() OVER (PARTITION BY dept_num ORDER BY salary) from emp_ct ;
+							Will	1000	4000	1
+							Will	1000	4000	1
+							Michael	1000	5000	3
+							Lucy	1000	5500	4
+							Steven	1000	6400	5
+							Lily	1001	5000	1
+							Jess	1001	6000	2
+							Mike	1001	6400	3
+							Yun	1002	5500	1
+							Wei	1002	7000	2
+							Richard	1002	8000	3
+		--dense_rank() , 密度排名，无缝。
+		SELECT name, dept_num, salary ,  DENSE_RANK() OVER (PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+							Will	1000	4000	1
+							Will	1000	4000	1
+							Michael	1000	5000	2
+							Lucy	1000	5500	3
+							Steven	1000	6400	4
+							Lily	1001	5000	1
+							Jess	1001	6000	2
+							Mike	1001	6400	3
+							Yun	1002	5500	1
+							Wei	1002	7000	2
+							Richard	1002	8000	3
+		--percent_rank() , 比例排名，衡量排名在整体排名中的分布情况。
+		SELECT name, dept_num, salary ,  percent_rank() OVER (PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+							Will	1000	4000	0.0
+							Will	1000	4000	0.0
+							Michael	1000	5000	0.5
+							Lucy	1000	5500	0.75
+							Steven	1000	6400	1.0
+							Lily	1001	5000	0.0
+							Jess	1001	6000	0.5
+							Mike	1001	6400	1.0
+							Yun	1002	5500	0.0
+							Wei	1002	7000	0.5
+							Richard	1002	8000	1.0
+
+		--分桶统计,将分区内容数据均匀分配到若干个桶中。
+		SELECT name, dept_num, salary ,  NTILE(4) OVER(PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+								Will	1000	4000	1
+								Will	1000	4000	1
+								Michael	1000	5000	2
+								Lucy	1000	5500	3
+								Steven	1000	6400	4
+								Lily	1001	5000	1
+								Jess	1001	6000	2
+								Mike	1001	6400	3
+								Yun	1002	5500	1
+								Wei	1002	7000	2
+								Richard	1002	8000	3
+		--lead,从当前行计数，访问下两行的salary,如果超过窗口范围返回null。
+		SELECT name, dept_num, salary, LEAD(salary, 2) OVER(PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+								Will	1000	4000	5000
+								Will	1000	4000	5500
+								Michael	1000	5000	6400
+								Lucy	1000	5500	NULL
+								Steven	1000	6400	NULL
+								Lily	1001	5000	6400
+								Jess	1001	6000	NULL
+								Mike	1001	6400	NULL
+								Yun	1002	5500	8000
+								Wei	1002	7000	NULL
+								Richard	1002	8000	NULL
+		--lag,从当前行计数，访问之前的行salary,如果超过窗口范围返回null。
+		SELECT name, dept_num, salary, lag(salary, 2) OVER(PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+								Will	1000	4000	NULL
+								Will	1000	4000	NULL
+								Michael	1000	5000	4000
+								Lucy	1000	5500	4000
+								Steven	1000	6400	5000
+								Lily	1001	5000	NULL
+								Jess	1001	6000	NULL
+								Mike	1001	6400	5000
+								Yun	1002	5500	NULL
+								Wei	1002	7000	NULL
+								Richard	1002	8000	5500
+		--first_value,访问分区内的第一行值
+		SELECT name, dept_num, salary, FIRST_VALUE(salary) OVER (PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+								Will	1000	4000	4000
+								Will	1000	4000	4000
+								Michael	1000	5000	4000
+								Lucy	1000	5500	4000
+								Steven	1000	6400	4000
+								Lily	1001	5000	5000
+								Jess	1001	6000	5000
+								Mike	1001	6400	5000
+								Yun	1002	5500	5500
+								Wei	1002	7000	5500
+								Richard	1002	8000	5500
+		--laster_value,（自己的行就是最后一行，跟开窗函数的大小和范围有关）
+		SELECT name, dept_num, salary, last_VALUE(salary) OVER (PARTITION BY dept_num ORDER BY salary) AS t1 from emp_ct ;
+								Will	1000	4000	4000
+								Will	1000	4000	4000
+								Michael	1000	5000	5000
+								Lucy	1000	5500	5500
+								Steven	1000	6400	6400
+								Lily	1001	5000	5000
+								Jess	1001	6000	6000
+								Mike	1001	6400	6400
+								Yun	1002	5500	5500
+								Wei	1002	7000	7000
+								Richard	1002	8000	8000
+
+		--使用range开窗函数 RANGE BETWEEN ... AND ...（有范围的开窗）
+		SELECT name, dept_num, salary, LAST_VALUE(salary) OVER (PARTITION BY dept_num ORDER BY salary RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS t1 from emp_ct ;
+								Will	1000	4000	6400
+								Will	1000	4000	6400
+								Michael	1000	5000	6400
+								Lucy	1000	5500	6400
+								Steven	1000	6400	6400
+								Lily	1001	5000	6400
+								Jess	1001	6000	6400
+								Mike	1001	6400	6400
+								Yun	1002	5500	8000
+								Wei	1002	7000	8000
+								Richard	1002	8000	8000
+		--RANGE : 对值的+/-.
+		SELECT name, dept_num, salary, LAST_VALUE(salary) OVER (PARTITION BY dept_num ORDER BY salary RANGE BETWEEN UNBOUNDED PRECEDING AND current row) AS t1 from emp_ct ;
+								Will	1000	4000	4000
+								Will	1000	4000	4000
+								Michael	1000	5000	5000
+								Lucy	1000	5500	5500
+								Steven	1000	6400	6400
+								Lily	1001	5000	5000
+								Jess	1001	6000	6000
+								Mike	1001	6400	6400
+								Yun	1002	5500	5500
+								Wei	1002	7000	7000
+								Richard	1002	8000	8000
+		--ROWS : 查看的行（前面两行和后面两行还有自己进行比较）
+		SELECT name, dept_num, salary, LAST_VALUE(salary) OVER (PARTITION BY dept_num ORDER BY salary ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) AS t1 from emp_ct ;
+							Will	1000	4000	5000
+							Will	1000	4000	5500
+							Michael	1000	5000	6400
+							Lucy	1000	5500	6400
+							Steven	1000	6400	6400
+							Lily	1001	5000	6400
+							Jess	1001	6000	6400
+							Mike	1001	6400	6400
+							Yun	1002	5500	8000
+							Wei	1002	7000	8000
+							Richard	1002	8000	8000
+
+		SELECT name, dept_num, salary, MAX(salary) OVER (PARTITION BY dept_num ORDER BY salary ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) t1 from emp_ct ;
+							Will	1000	4000	4000
+							Will	1000	4000	4000
+							Michael	1000	5000	5000
+							Lucy	1000	5500	5500
+							Steven	1000	6400	6400
+							Lily	1001	5000	5000
+							Jess	1001	6000	6000
+							Mike	1001	6400	6400
+							Yun	1002	5500	5500
+							Wei	1002	7000	7000
+							Richard	1002	8000	8000
+		SELECT name, dept_num, salary, MAX(salary) OVER (PARTITION BY dept_num ORDER BY salary ROWS BETWEEN 2 PRECEDING AND 3 FOLLOWING) t1 from emp_ct ;
+							Will	1000	4000	5500
+							Will	1000	4000	6400
+							Michael	1000	5000	6400
+							Lucy	1000	5500	6400
+							Steven	1000	6400	6400
+							Lily	1001	5000	6400
+							Jess	1001	6000	6400
+							Mike	1001	6400	6400
+							Yun	1002	5500	8000
+							Wei	1002	7000	8000
+							Richard	1002	8000	8000
+		SELECT name, dept_num, salary, MAX(salary) OVER (PARTITION BY dept_num ORDER BY salary ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) t1 from emp_ct ;
+
+		--窗口重用
+		SELECT name, dept_num, salary , MAX(salary) OVER w1 AS mx,MIN(salary) OVER w1 AS mn,AVG(salary) OVER w1 AS ag from emp_ct WINDOW w1 AS (PARTITION BY dept_num ORDER BY salary ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) ;
+							Will	1000	4000	4000	4000	4000.0
+							Will	1000	4000	4000	4000	4000.0
+							Michael	1000	5000	5000	4000	4333.333333333333
+							Lucy	1000	5500	5500	4000	4833.333333333333
+							Steven	1000	6400	6400	5000	5633.333333333333
+							Lily	1001	5000	5000	5000	5000.0
+							Jess	1001	6000	6000	5000	5500.0
+							Mike	1001	6400	6400	5000	5800.0
+							Yun	1002	5500	5500	5500	5500.0
+							Wei	1002	7000	7000	5500	6250.0
+							Richard	1002	8000	8000	5500	6833.333333333333
+
+		[开窗函数]
+		range|rows between ... and ;
+		range是值偏移，rows是行偏移。
+
+
+
+
+
+
+
+
+
+设置mysql，查询精度更高的执行时间
+------------------------
+	$mysql>set profiling=1 ;
+	$mysql>select count(*) from customers ;
+	$mysql>show profiles ;
+	
+	Diagnostic Messages for this Task:
+Error: java.lang.RuntimeException: org.apache.hadoop.hive.ql.metadata.HiveException: Hive Runtime Error while processing row {"custid":86913510,"json":"{\"reviewPics\":null,\"extInfoList\":null,\"expenseList\":null,\"reviewIndexes\":[2],\"scoreList\":[{\"score\":5,\"title\":\"口味\",\"desc\":\"\"},{\"score\":5,\"title\":\"服务\",\"desc\":\"\"},{\"score\":5,\"title\":\"环境\",\"desc\":\"\"}]}"}
+	at org.apache.hadoop.hive.ql.exec.mr.ExecMapper.map(ExecMapper.java:169)
+	at org.apache.hadoop.mapred.MapRunner.run(MapRunner.java:54)
+	at org.apache.hadoop.mapred.MapTask.runOldMapper(MapTask.java:453)
+	at org.apache.hadoop.mapred.MapTask.run(MapTask.java:343)
+	at org.apache.hadoop.mapred.YarnChild$2.run(YarnChild.java:164)
+	at java.security.AccessController.doPrivileged(Native Method)
+	at javax.security.auth.Subject.doAs(Subject.java:422)
+	at org.apache.hadoop.security.UserGroupInformation.doAs(UserGroupInformation.java:1698)
+	at org.apache.hadoop.mapred.YarnChild.main(YarnChild.java:158)
+Caused by: org.apache.hadoop.hive.ql.metadata.HiveException: Hive Runtime Error while processing row {"custid":86913510,"json":"{\"reviewPics\":null,\"extInfoList\":null,\"expenseList\":null,\"reviewIndexes\":[2],\"scoreList\":[{\"score\":5,\"title\":\"口味\",\"desc\":\"\"},{\"score\":5,\"title\":\"服务\",\"desc\":\"\"},{\"score\":5,\"title\":\"环境\",\"desc\":\"\"}]}"}
+	at org.apache.hadoop.hive.ql.exec.MapOperator.process(MapOperator.java:499)
+	at org.apache.hadoop.hive.ql.exec.mr.ExecMapper.map(ExecMapper.java:160)
+	... 8 more
+Caused by: org.apache.hadoop.hive.ql.metadata.HiveException: Unable to execute method public java.util.List com.ton.learn.hive.udf.jsonUDF.evaluate(java.lang.String)  on object com.ton.learn.hive.udf.jsonUDF@3c017078 of class com.ton.learn.hive.udf.jsonUDF with arguments {{"reviewPics":null,"extInfoList":null,"expenseList":null,"reviewIndexes":[2],"scoreList":[{"score":5,"title":"口味","desc":""},{"score":5,"title":"服务","desc":""},{"score":5,"title":"环境","desc":""}]}:java.lang.String} of size 1
+	at org.apache.hadoop.hive.ql.exec.FunctionRegistry.invoke(FunctionRegistry.java:991)
+	at org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge.evaluate(GenericUDFBridge.java:194)
+	at org.apache.hadoop.hive.ql.exec.ExprNodeGenericFuncEvaluator._evaluate(ExprNodeGenericFuncEvaluator.java:186)
+	at org.apache.hadoop.hive.ql.exec.ExprNodeEvaluator.evaluate(ExprNodeEvaluator.java:77)
+	at org.apache.hadoop.hive.ql.exec.ExprNodeEvaluator.evaluate(ExprNodeEvaluator.java:65)
+	at org.apache.hadoop.hive.ql.exec.SelectOperator.process(SelectOperator.java:88)
+	at org.apache.hadoop.hive.ql.exec.Operator.forward(Operator.java:878)
+	at org.apache.hadoop.hive.ql.exec.TableScanOperator.process(TableScanOperator.java:130)
+	at org.apache.hadoop.hive.ql.exec.MapOperator$MapOpCtx.forward(MapOperator.java:149)
+	at org.apache.hadoop.hive.ql.exec.MapOperator.process(MapOperator.java:489)
+	... 9 more
+Caused by: java.lang.reflect.InvocationTargetException
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+	at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.lang.reflect.Method.invoke(Method.java:497)
+	at org.apache.hadoop.hive.ql.exec.FunctionRegistry.invoke(FunctionRegistry.java:967)
+	... 18 more
+Caused by: java.lang.NoClassDefFoundError: com/alibaba/fastjson/JSON
+	at com.ton.learn.hive.udf.jsonUDF.evaluate(jsonUDF.java:15)
+	... 23 more
+Caused by: java.lang.ClassNotFoundException: com.alibaba.fastjson.JSON
+	at java.net.URLClassLoader.findClass(URLClassLoader.java:381)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+	at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:331)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:357)
+	... 24 more
+
+Container killed by the ApplicationMaster.
+Container killed on request. Exit code is 143
+Container exited with a non-zero exit code 143
+
+

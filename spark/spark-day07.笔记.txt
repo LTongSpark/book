@@ -1,0 +1,649 @@
+spark sql
+----------------
+	集成hive。
+	SparkSession.createDataframe();
+	Dataframe = Dataset[Row]
+
+	rdd.
+	df.printlnSchema();
+	df.explain();
+
+
+MR
+------------------
+	静态数据。
+
+流计算
+-------------------
+	不会终止，数据一直在产生。
+
+Storm
+-------------------
+	实时计算框架，实时很高，吞吐量小。
+
+Spark Streaming
+-------------------
+	对实时数据流进行处理，具有可伸缩、高吞吐量、容错机制。
+	数据来源可以是多种，kafka、socket、flume。
+	提供了高级api，map,reduce,join,windows等等。
+	计算结果可以推送到文件系统，database或者仪表盘。
+
+	流计算。
+	spark core
+	spark sql
+	spark streaming			//实时的，准实时的。
+	小批量计算。
+	实时性不是非常高，吞吐量大.
+
+	注意：
+		spark-shell无法实现流计算。
+	
+体验spark streaming
+---------------------
+	1.引入新的maven依赖
+		<dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-streaming_2.11</artifactId>
+            <version>2.1.0</version>
+        </dependency>
+
+	2.编程
+		import org.apache.spark.{SparkConf, SparkContext}
+		import org.apache.spark.streaming.{Seconds, StreamingContext}
+
+		/**
+		  * Created by Administrator on 2018/3/8.
+		  */
+		object SparkStreamingWordCount {
+			def main(args: Array[String]): Unit = {
+				val conf = new SparkConf()
+				conf.setAppName("worldCOunt")
+				conf.setMaster("local[*]")
+
+				//时间片是2秒
+				val ssc = new StreamingContext(conf ,Seconds(2))
+
+				//创建套接字文本流
+				val lines = ssc.socketTextStream("localhost", 8888)
+
+				//压扁生成单词流
+				val words = lines.flatMap(_.split(" "))
+
+				//标一成对
+				val pairs = words.map((_,1))
+
+				//统计数量
+				val results = pairs.reduceByKey(_+_)
+
+				//输出统计结果
+				results.print()
+
+				//启动流
+				ssc.start()
+
+				//等待停止
+				ssc.awaitTermination()
+
+			}
+		}
+
+	3.启动nc服务器
+		[centos]
+		nc -lk 8888
+
+	4.启动scala程序
+
+	5.在nc -lk的终端输入消息
+		hello world
+	
+	6.配置log4j.properties
+		[spark/conf/log4j.properties.template]
+		log4j.rootCategory=ERROR, console
+		...
+	
+Streaming.start()
+----------------------
+	内部走的是spark提交流程，在worker端的执行器进程中启动socket对象，
+	并在分线程中receive消息(socket终端输入一行数据)，将该数据存储在spark
+	内存中，改行数据推送到spark内存前，聚合成数据块。
+
+	1.ReceiverSupervisor
+		在worker中对receiver进行监管，提供了所有必要接口来处理接受到的数据。
+		实现类是ReceiverSupervisorImpl,内部提供了BlockGenerator,将数据流切割成
+		数据块。
+
+	2.SocketReceiver
+		Socket文本接收器，接受没行数据，通过ReceiverSupervisor存储到spark内存中。
+
+
+
+
+部署spark streaming应用到spark集群
+----------------------------------
+	0.修改程序的master地址。
+		//硬编码
+		//conf.setMaster("spark://s101:7077")
+		通过spark-submit --master 参数传递过来。
+	1.导出程序的jar包
+
+	2.启动nc socket
+		nc -lk 8888
+
+	3.启动spark流应用
+		spark-submit --master spark://s101:7077 --deploy-mode client --class 
+	
+	4.nc -lk上输入
+		hello world
+
+定义ssc之后，有如下内存:
+	1.创建DStrema，代码就是ssc.socketTextStream
+	2.定义流的计算过程
+		ds.map()|filter()|flatMap()|print()
+
+	3.调用start()方法开始接受数据并进行处理。
+	4.调用streamingContext.awaitTermination()函数等待停止动作。
+	5.也可以通过手动调用ss.stop()停止应用。
+
+	[注意实现]
+	1.ssc启动后，不能修改计算过程。
+	2.ssc停止后，不能重启。
+	3.每个JVM只有一个ssc处于active态。
+	4.ssc.stop()停止时不但将ssc停掉，也会将sc停掉，如果不想停止sc，ssc.stop(false)
+	5.sc可以创建不同的ssc。
+
+
+Discretized Streams
+-----------------------
+	DStream，离散流。
+	表示连续的数据流，可以通过源得到，也可以通过DStream变换得到。
+	内部表现为连续的RDD序列。对DStream的操作都落实到RDD的操作。
+
+
+[DStream和Receiver]
+-----------------------
+	每个DStream都和Receiver关联，Receiver用来从数据源接受数据并存放于spark
+	内存进行计算。
+
+	spark流的来源有两种:
+	1.基本源
+		通过spark API可以直接使用。textSocketStream()
+	2.高级源
+		通过其他类得到源，比如kafka源。
+	
+	如果需要接受多个源，可以创建多个DStream,因此也会创建多个receiver，
+	receiver单独占用执行的的一个cpu内核，需要分配足够多的内核来进行
+	数据流计算，如果线程数等于receive个数，没有线程能够执行计算工作。
+	[注意事项]
+		local模式下，不能使用local或local[1] ,表示本地只有一个线程执行任务，
+		该线程只能接受数据，没有线程执行计算工作。
+		local[n] n > receiver个数。
+
+windows
+----------------------
+	以下两个单位都必须是batch的整倍数。
+	1.windows length
+		窗口长度 , 计算量。
+
+	2.slide interval
+		滑动间隔 , 频率，多长时间计算一次。
+
+	3.调用方式
+		pairs.reduceByKeyAndWindow(agg _ , Seconds(10) , Seconds(4))
+
+spark streaming(java版)
+-------------------------
+	import org.apache.spark.SparkConf;
+	import org.apache.spark.api.java.function.FlatMapFunction;
+	import org.apache.spark.api.java.function.Function2;
+	import org.apache.spark.api.java.function.PairFunction;
+	import org.apache.spark.streaming.Durations;
+	import org.apache.spark.streaming.Seconds;
+	import org.apache.spark.streaming.api.java.JavaDStream;
+	import org.apache.spark.streaming.api.java.JavaPairDStream;
+	import org.apache.spark.streaming.api.java.JavaStreamingContext;
+	import org.apache.spark.streaming.dstream.DStream;
+	import scala.Tuple2;
+	import scala.actors.threadpool.Arrays;
+
+	import java.util.Iterator;
+
+	/**
+	 *
+	 */
+	public class SparkStreamingWordCountJava {
+		public static void main(String[] args) throws Exception {
+			SparkConf conf = new SparkConf() ;
+			conf.setAppName("wc") ;
+			conf.setMaster("local[*]") ;
+			//创建ssc
+			JavaStreamingContext ssc = new JavaStreamingContext(conf , Durations.seconds(2)) ;
+
+			//2.创建socket 文本流
+			JavaDStream<String> ds1 = ssc.socketTextStream("s101" , 8888) ;
+			//3.压扁
+			JavaDStream<String> ds2 = ds1.flatMap(new FlatMapFunction<String, String>() {
+				public Iterator<String> call(String s) throws Exception {
+					String[] arr = s.split(" ");
+					return Arrays.asList(arr).iterator();
+				}
+			}) ;
+			//4.表1成对
+			JavaPairDStream<String, Integer> ds3 = ds2.mapToPair(new PairFunction<String, String, Integer>() {
+				public Tuple2<String, Integer> call(String s) throws Exception {
+					return new Tuple2<String, Integer>(s, 1);
+				}
+			});
+
+			//5.聚合数据
+			JavaPairDStream<String, Integer> ds4 = ds3.reduceByKeyAndWindow(new Function2<Integer, Integer, Integer>() {
+				public Integer call(Integer v1, Integer v2) throws Exception {
+					return v1 + v2;
+				}
+			} , Durations.seconds(10), Durations.seconds(4)) ;
+
+			//5.打印
+			ds4.print();
+
+			ssc.start();
+
+			ssc.awaitTermination();
+		}
+	}
+
+
+Spark streaming updateStateByKey
+------------------------------------
+	从流启动开始计算，对每个key都关联了一个状态，每次计算都将旧状态和新的值合并
+	产生新状态并和key一直向下传递。
+	使用该操作，需要设置ssc的检查点目录存放数据。
+
+	import org.apache.spark.{SparkConf, SparkContext}
+	import org.apache.spark.streaming.{Seconds, StreamingContext}
+
+	/**
+	  * Created by Administrator on 2018/3/8.
+	  */
+	object SparkStreamingWordCountScala {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("worldCount")
+			conf.setMaster("local[2]")
+
+			//时间片是2秒
+			val ssc = new StreamingContext(conf ,Seconds(2))
+
+			ssc.checkpoint("file:///d:/java/chk")
+
+			//创建套接字文本流
+			val lines = ssc.socketTextStream("s101", 8888)
+
+			//压扁生成单词流
+			val words = lines.flatMap(_.split(" "))
+
+			//标一成对
+			val pairs = words.map((_,1))
+
+			//
+			val result = pairs.reduceByKey((a:Int,b:Int)=>a + b)
+
+			//状态更新函数
+			def updateFunc(a:Seq[Int],b:Option[Int]):Option[Int] = {
+				var count:Int = 0 ;
+				for(e <- a){
+					count = count + e
+				}
+
+				var newcount:Int = 0 ;
+				if(b.isEmpty){
+					newcount = count ;
+				}
+				else{
+					newcount = count + b.get;
+				}
+
+				if(newcount >= 5){
+					None
+				}
+				else{
+					Some(newcount)
+				}
+			}
+			result.updateStateByKey(updateFunc).print()
+			//启动流
+			ssc.start()
+
+			ssc.awaitTermination()
+		}
+	}
+
+Spark streaming join
+----------------------
+	将两个KV类型DStream，按照相同key进行连接，如果是window操作需要有相同的滑动间隔。
+	窗口长度无影响，
+
+
+DStream.foreachRDD
+----------------------
+	针对流中的每个RDD进行操作。
+	import java.sql.DriverManager
+
+	import org.apache.spark.SparkConf
+	import org.apache.spark.streaming.{Seconds, StreamingContext}
+
+	/**
+	  * Created by Administrator on 2018/3/8.
+	  */
+	object SparkStreamingForeachRDDScala {
+
+		def createNewConnection() = {
+			Class.forName("com.mysql.jdbc.Driver")
+			val conn = DriverManager.getConnection("jdbc:mysql://192.168.231.1:3306/big9","root","root")
+			conn
+		}
+
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("worldCount")
+			conf.setMaster("local[4]")
+
+			//时间片是2秒
+			val ssc = new StreamingContext(conf ,Seconds(2))
+
+			ssc.checkpoint("file:///d:/java/chk")
+
+			//创建套接字文本流
+			val ds1 = ssc.socketTextStream("s101", 8888)
+			val ds2 = ds1.flatMap(_.split(" ")).map((_,1)).reduceByKey(_+_)
+			ds2.foreachRDD(rdd=>{
+
+				rdd.foreachPartition(it=>{
+					val conn = createNewConnection()
+					// executed at the driver
+					val ppst = conn.prepareStatement("insert into wc(word,cnt) values(?,?)")
+					conn.setAutoCommit(false)
+					for(e <- it){
+						ppst.setString(1 , e._1)
+						ppst.setInt(2,e._2)
+						ppst.executeUpdate()
+					}
+					conn.commit()
+					conn.close()
+					ppst.close()
+				})
+			})
+			//启动流
+			ssc.start()
+			ssc.awaitTermination()
+		}
+	}
+
+DStream中RDD的分区计算方式
+--------------------------
+	DStream通过receiver接受数据写入spark内存，通过BlockGenerator生成数据块。
+	将多个BlockId联合生成BlockRDD.
+	//BlockId是临时，不进行串行化。
+	class BlockRDD[T: ClassTag](sc: SparkContext, @transient val blockIds: Array[BlockId])
+	计算时blockIds映射成BlockRDDPartition集合，每个BlockRDDPartition分区含有一个 blockId。
+
+
+Spark Stream + Spark SQL组合使用
+--------------------------------
+	import org.apache.spark.SparkConf
+	import org.apache.spark.sql.SparkSession
+	import org.apache.spark.streaming.{Seconds, StreamingContext}
+
+	/**
+	  * Created by Administrator on 2018/3/8.
+	  */
+	object SparkStreamingWordCountSparkSQLScala {
+		def main(args: Array[String]): Unit = {
+			val conf = new SparkConf()
+			conf.setAppName("worldCount")
+			conf.setMaster("local[2]")
+
+			//时间片是2秒
+			val ssc = new StreamingContext(conf ,Seconds(2))
+
+			ssc.checkpoint("file:///d:/java/chk")
+
+			//创建套接字文本流
+			val lines = ssc.socketTextStream("s101", 8888)
+
+			//压扁生成单词流
+			val words = lines.flatMap(_.split(" "))
+
+			words.foreachRDD(rdd=>{
+				val spark = SparkSession.builder.config(rdd.sparkContext.getConf).getOrCreate()
+				import spark.implicits._
+				val df1= rdd.toDF("word")
+				df1.createOrReplaceTempView("_temp")
+				spark.sql("select word,count(*) from _temp group by word").show()
+			})
+			//启动流
+			ssc.start()
+
+			ssc.awaitTermination()
+		}
+	}
+
+
+Spark Streaming集成kafka
+-------------------------
+	1.注意
+		spark-streaming-kafka-0-10_2.11不兼容之前的版本，
+		spark-streaming-kafka-0-8_2.11兼容0.9和0.10.
+
+	2.启动kafka集群
+		xkafka.sh start
+	
+	3.验证kafka是否ok
+		3.1)启动消费者
+			kafka-console-consumer.sh --zookeeper s102:2181 --topic topic1
+
+		3.2)启动生产者
+			kafka-console-producer.sh --broker-list s102:9092 --topic topic1
+			
+		3.3)发送消息
+
+	4.引入maven依赖
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-streaming-kafka-0-10_2.11</artifactId>
+            <version>2.1.0</version>
+        </dependency>
+
+	5.编程
+		import org.apache.kafka.clients.consumer.ConsumerRecord
+		import org.apache.kafka.common.serialization.StringDeserializer
+		import org.apache.spark.SparkConf
+		import org.apache.spark.streaming.{Seconds, StreamingContext}
+		import org.apache.spark.streaming.kafka010._
+		import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
+		import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
+
+		/**
+		  * Created by Administrator on 2018/3/8.
+		  */
+		object SparkStreamingKafkaScala {
+
+			def main(args: Array[String]): Unit = {
+				val conf = new SparkConf()
+				conf.setAppName("kafka")
+				conf.setMaster("local[*]")
+
+				val ssc = new StreamingContext(conf , Seconds(2))
+
+				//kafka参数
+				val kafkaParams = Map[String, Object](
+					"bootstrap.servers" -> "s102:9092,s103:9092",
+					"key.deserializer" -> classOf[StringDeserializer],
+					"value.deserializer" -> classOf[StringDeserializer],
+					"group.id" -> "g1",
+					"auto.offset.reset" -> "latest",
+					"enable.auto.commit" -> (false: java.lang.Boolean)
+				)
+
+				val topics = Array("topic1")
+				val stream = KafkaUtils.createDirectStream[String, String](
+					ssc,
+					PreferConsistent,
+					Subscribe[String, String](topics, kafkaParams)
+				)
+
+				val ds2 = stream.map(record => (record.key, record.value))
+				ds2.print()
+
+				ssc.start()
+
+				ssc.awaitTermination()
+			}
+		}
+	
+	6.在控制台生产者发送消息
+
+LocationStrategies
+----------------
+	位置策略，
+	针对主题分区在executor如何控制消费者的分布的。
+	位置的选择是相对的，不是绝对的。
+	1.PreferBrokers
+		如果kafka的broker服务器和spark的executor位于同一主机，executor优先消费
+		本机上自己做leader的分区。
+
+	2.PreferConsistent
+		多数时候采用该方式，在所有可用的执行器上均匀分配kakfa的主题的所有分区。
+
+	3.PreferFixed
+		如果有很明显的分区倾斜，可以使用该方式，避免数据消费倾斜。
+		显式指定特定的分区，没有显式指定的分区仍然采用(2)方案。
+
+
+ConsumerStrategies
+--------------------
+	对每个消费者的行为进行控制。
+	该类可扩展，自行实现。
+	1.ConsumerStrategies.Assign
+		指定固定的分区集合。
+
+	2.ConsumerStrategies.Subscribe
+		允许消费订阅固定的主题集合。
+
+	3.ConsumerStrategies.SubscribePattern 
+		使用正则表达式指定感兴趣的主题集合。
+
+
+spark
+1.练习
+----------------------
+	不用windows操作，是window化功能，使用updateStateByKey
+	
+	
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"dongjixin","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"tong","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+
+
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          5|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          6|                   0|
+
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          5|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          6|                   0|
+
+
+
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"tong","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"tong","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"dongjixin","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"dongjixin","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+{"base":{"client":"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36","hostName":"172.20.8.14","ip":"172.20.8.9","timestamp":"1543284849000","userId":"dongjixin","userType":"manual"},"infoType":"sensitivelog","interfaceNo":"3000060001","operation":{"act":{"affect":"182222","doType":"select","useTime":"42"},"abnormal":"xxxx","optional":{"dataClass":""},"type":"xxxxxxxx"}}
+0
+0
+0
+0
+0
+0
+0
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|  user_id|opra_type|last_opra_time|originalCMD|   hostname|              client|useType|        ip|abnormal|classes|tablename|influen_num|ViolationsRepository|
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+
+0
+1
+2
+3
++-------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|user_id|opra_type|last_opra_time|originalCMD|   hostname|              client|useType|        ip|abnormal|classes|tablename|influen_num|ViolationsRepository|
++-------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|   tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|   tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|   tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|   tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
++-------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+
+0
+Map(oneDaySelect -> Map(tong -> 1), MinLogFail -> Map(Jack -> 0), HourLoginFail -> Map(Jack -> 0), DayLoginFail -> Map(Jack -> 0))
+1
+Map(oneDaySelect -> Map(tong -> 2), MinLogFail -> Map(Jack -> 0), HourLoginFail -> Map(Jack -> 0), DayLoginFail -> Map(Jack -> 0))
+2
+Map(oneDaySelect -> Map(tong -> 3), MinLogFail -> Map(Jack -> 0), HourLoginFail -> Map(Jack -> 0), DayLoginFail -> Map(Jack -> 0))
+3
+Map(oneDaySelect -> Map(tong -> 4), MinLogFail -> Map(Jack -> 0), HourLoginFail -> Map(Jack -> 0), DayLoginFail -> Map(Jack -> 0))
+
+
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|  user_id|opra_type|last_opra_time|originalCMD|   hostname|              client|useType|        ip|abnormal|classes|tablename|influen_num|ViolationsRepository|
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          1|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          2|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          3|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          4|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          5|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          5|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          6|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          6|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          7|                   0|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          7|                   0|
+|dongjixin|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          8|                   1|
+|     tong|   select| 1543284849000|           |172.20.8.14|Mozilla/5.0 (Wind...| manual|172.20.8.9|    xxxx|      0|         |          8|                   1|
++---------+---------+--------------+-----------+-----------+--------------------+-------+----------+--------+-------+---------+-----------+--------------------+
+
+	
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	

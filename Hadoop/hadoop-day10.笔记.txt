@@ -1,0 +1,844 @@
+RPC
+-----------
+	remote procedure call,远程过程调用。
+	协议。
+
+IPC
+-----------
+	inter process communication,进程间通信。
+	协议，Socket
+
+HA
+------------
+	High availability,高可用。
+	系统体统持续服务的能力。
+	衡量系统的高可用能力，使用9的个数衡量。
+	525600 minutes
+	99.9%					//525.6		
+	99.99%					//52.56
+	99.999%					//5.256
+	99.9999%				//0.5256
+
+
+SPOF
+--------------
+	single point of failure,
+	单点故障。
+
+fault tolerant
+---------------
+	容错。系统软件逻辑的修复能力。
+
+failover
+---------------
+	容灾，硬件故障。
+
+轻量级
+---------------
+	组件的启动和销毁都不需要消耗太多资源。
+
+企业级
+---------------
+	
+
+NN1 : active,活跃。
+
+NN2 : standby,待命。
+
+使用QJM实现HDFS的HA
+-------------------
+	 QJM	:Quorum Journal Manage
+
+	 1.架构
+		配置2台独立NN，任意时刻只有一个处于active态，另一个是standby态。
+		active负责cluster的所有操作，standby作为slave节点，standby维护足够
+		多的状态信息已备进行快速容灾。
+
+		为保证standby和active状态同步，两个节点(AN和SN)都和JN(Journal Node)守护进程组通信，
+		对Namespace的修改记录日志写入到JN的集群的半数以上节点(majority)。
+		standby节点从JN读取log，实时观测JN的变化，更新自身的状态。容灾事件发生时，Standby节点
+		切换成active之前确保读取所有的log。
+
+		为保证快速容灾，standby节点需要有集群上数据块的最新信息。因此，数据节点配置成交互两个NN，
+		并发送块信息和心跳信息给两个节点。
+
+		HA的正确操作很重要，同一时刻只能有一个active节点，否则可能丢失数据或者结果不一致问题。
+		为防止脑裂(两个节点为active)，JN保证同一时刻只能有一个节点进行写操作。
+		容灾时，成为active节点的NN接管JN的写入工作。
+
+	2.硬件资源
+		a)NN主机
+			运行active和standby节点的主机，配置完全相同。
+		b)JN主机
+			运行journal进程的主机，JN进程是轻量级的，因此该进程可以和其他的hadoop进程位于同一主机。
+			至少配置3台JN节点,允许1个节点挂掉。JN的容灾能力是 (n - 1) / 2。
+		
+		注意，standby节点namespace执行检查点操作，类似于2nn，因此没有必要再运行2nn，如果运行2NN也会导致
+		错误。
+
+	3.部署
+		[hdfs-site.xml]
+		<property>
+			<name>dfs.nameservices</name>
+			<value>mycluster</value>
+		</property>
+		<property>
+			<name>dfs.ha.namenodes.mycluster</name>
+			<value>nn1,nn2</value>
+		</property>
+
+		<property>
+			<name>dfs.namenode.rpc-address.mycluster.nn1</name>
+			<value>s101:8020</value>
+		</property>
+		<property>
+			<name>dfs.namenode.rpc-address.mycluster.nn2</name>
+			<value>s105:8020</value>
+		</property>
+
+		<property>
+			<name>dfs.namenode.http-address.mycluster.nn1</name>
+			<value>s101:50070</value>
+		</property>
+		<property>
+			<name>dfs.namenode.http-address.mycluster.nn2</name>
+			<value>s105:50070</value>
+		</property>
+
+		<property>
+			<name>dfs.namenode.shared.edits.dir</name>
+			<value>qjournal://s102:8485;s103:8485;s104:8485/mycluster</value>
+		</property>
+
+		<property>
+			<name>dfs.client.failover.proxy.provider.mycluster</name>
+			<value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+		</property>
+
+		<property>
+			<name>dfs.ha.fencing.methods</name>
+			<value>sshfence</value>
+		</property>
+		<property>
+			<name>dfs.ha.fencing.ssh.private-key-files</name>
+			<value>/home/centos/.ssh/id_rsa</value>
+		</property>
+		
+		[core-site.xml]
+		<property>
+			<name>fs.defaultFS</name>
+			<value>hdfs://mycluster</value>
+		</property>
+		<property>
+			<name>dfs.journalnode.edits.dir</name>
+			<value>/home/centos/hadoop/ha/journalnode</value>
+		</property>
+
+	4.部署细节
+		配置完成并分发后，使用以下命令在JN节点启动Journal进程。
+			$>hadoop-daemon.sh start journalnode
+
+		启动JN之后，需要在两个NN之间进行磁盘元数据的同步处理。
+		
+		a)如果搭建全新的hdfs集群，需要在其中的一个nn上进行format工作。
+			$>hadoop namenode -format
+		
+		b)如果NN已经格式化或者从非HA模式转换成HA模式，复制原NN的元数据目录到新的NN，
+		  在没有格式化的NN上执行如下命令,该命令确保JN节点包含足够多的edit来启动NN。
+			$>hdfs namenode -bootstrapStandby
+
+		c)如果从非HA切换到HA，运行如下命令，是从本地edit目录初始化数据到JN节点。
+			$>hdfs namenode -initializeSharedEdits
+		
+		此时，就可正常启动每个NN。
+
+
+实操HA
+-----------------
+	0.停掉集群
+		$>stop-all.sh
+
+	1.对s105进行准备工作。
+		1.1)ssh处理，所有其他主机。
+			$>ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa
+
+		1.2)ssh-copy-id到所有主机
+			$>ssh-copy-id s101
+			$>ssh-copy-id s102
+			...
+			$>ssh-copy-id s106
+
+	2.修改所有主机/home/centos/hadoop/full -> /home/centos/hadoop/ha
+		
+	3.配置core-site.xml和hdfs-site.xml并分发
+		[core-site.xml]
+		<?xml version="1.0"?>
+		<configuration>
+			<property>
+					<name>fs.defaultFS</name>
+					<value>hdfs://mycluster</value>
+			</property>
+			<property>
+					<name>dfs.journalnode.edits.dir</name>
+					<value>/home/centos/hadoop/ha/journalnode</value>
+			</property>
+			<property>
+					 <name>hadoop.tmp.dir</name>
+					<value>/home/centos/hadoop/ha</value>
+			</property>
+			<property>
+					 <name>fs.trash.interval</name>                                                           
+					 <value>0</value>                                                                         
+					 <description>
+							删除文件后在回收站保留的分钟数。默认0，表示禁用回收站。                           
+					 </description>                                                                           
+			</property>
+
+			<property>
+					 <name>fs.trash.checkpoint.interval</name>                                                
+					 <value>0</value>                                                                         
+					 <description>两次检查回收站的间隔数(默认0分钟),0表示和fs.trash.interval相同。</description>
+			</property>
+			<property>
+					<name>net.topology.node.switch.mapping.impl</name>
+					<value>com.it18zhang.hadoop.rackaware.MyDNSToSwitchMapping</value>
+			</property>
+		</configuration>
+
+		[hdfs-site.xml]
+		<?xml version="1.0" encoding="UTF-8"?>
+		<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+		<configuration>
+			<property>
+					<name>dfs.nameservices</name>
+					<value>mycluster</value>
+			</property>
+
+			<property>
+					<name>dfs.ha.namenodes.mycluster</name>
+					<value>nn1,nn2</value>
+			</property>
+
+			<property>
+					<name>dfs.namenode.rpc-address.mycluster.nn1</name>
+					<value>s101:8020</value>
+			</property>
+			<property>
+					<name>dfs.namenode.rpc-address.mycluster.nn2</name>
+					<value>s105:8020</value>
+			</property>
+
+			<property>
+					<name>dfs.namenode.http-address.mycluster.nn1</name>
+					<value>s101:50070</value>
+			</property>
+			<property>
+					<name>dfs.namenode.http-address.mycluster.nn2</name>
+					<value>s105:50070</value>
+			</property>
+
+			<property>
+					<name>dfs.namenode.shared.edits.dir</name>
+					<value>qjournal://s102:8485;s103:8485;s104:8485/mycluster</value>
+			</property>
+
+			<property>
+					<name>dfs.client.failover.proxy.provider.mycluster</name>
+					<value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+			</property>
+
+			<property>
+					<name>dfs.ha.fencing.methods</name>
+					<value>sshfence</value>
+			</property>
+			<property>
+					<name>dfs.ha.fencing.ssh.private-key-files</name>
+					<value>/home/centos/.ssh/id_rsa</value>
+			</property>
+			<property>
+					<name>dfs.replication</name>
+					<value>3</value>
+			</property>
+			<property>
+					  <name>dfs.namenode.secondary.http-address</name>
+					  <value>s105:50090</value>
+			</property>
+			<!-- NN的多目录配置 -->
+			<property>
+					 <name>dfs.namenode.name.dir</name>
+					 <value>file://${hadoop.tmp.dir}/dfs/name1,file://${hadoop.tmp.dir}/dfs/name2</value>
+			</property>
+			<!-- DN的多目录配置 -->
+			<property>
+					 <name>dfs.datanode.data.dir</name>
+					 <value>file://${hadoop.tmp.dir}/dfs/data1,file://${hadoop.tmp.dir}/dfs/data2</value>
+			</property>
+			<property>
+					 <name>dfs.namenode.fs-limits.min-block-size</name>
+					 <value>512</value>
+			</property>
+			<property>
+					<name>dfs.hosts</name>
+					<value>/soft/hadoop/etc/hadoop/dfs_include.conf</value>
+			</property>
+			<property>
+					<name>dfs.hosts.exclude</name>
+					<value>/soft/hadoop/etc/hadoop/dfs_exclude.conf</value>
+			</property>
+		</configuration>
+
+	3'.分别启动JN进程
+		//s102
+		$>hadoop-daemon.sh start journalnode
+		//s103
+		$>hadoop-daemon.sh start journalnode
+		//s104
+		$>hadoop-daemon.sh start journalnode
+
+	4.保证s101名称节点启动。
+		$>hadoop-daemon.sh start namenode
+
+	5.复制s101的元数据到s105对应目录下。
+		$>scp -r /home/centos/hadoop/ha centos@s105:/home/centos/hadoop
+
+	6.登录s105，引导standby节点，*****选择N不要重新文件系统*****
+		$>hdfs namenode -bootstrapStandby
+
+	7.注释掉机架感知配置并分发。
+		
+	8.初始化日志到JN节点。
+		hdfs namenode -initializeSharedEdits
+
+	9.启动hdfs的其他所有进程
+		[s101]
+		$>hadoop-daemons.sh start datanode
+		
+		[s105]
+		hadoop-daemon.sh start namenode
+
+	10.HA管理命令
+		hdfs haadmin -transitionToActive nn1		//切换到active态
+		hdfs haadmin -transitionToStandby nn1		//切换到standby态
+		hdfs haadmin -getServiceState nn1			//查看服务状态
+		hdfs haadmin -failover nn1 nn2				//完成从nn1到nn2的容灾演练
+		
+
+配置hadoop多种模式并存
+-----------------------
+	[改造ha集群]
+	1.停掉集群
+	2.修改所有节点/soft/hadoop/etc/full -> /soft/hadoop/etc/ha
+		$>xcall.sh "mv /soft/hadoop/etc/full /soft/hadoop/etc/ha"
+
+	3.修改所有节点的软连接
+		$>xcall.sh "ln -sfT /soft/hadoop/etc/ha /soft/hadoop/etc/hadoop"
+
+	4.启动集群
+		$>start-all.sh
+	
+	5.切换s101状态
+		$>hdfs haadmin -transitionToActive nn1
+
+	[搭建full集群]
+	6.复制ha配置目录为full目录
+		$>cd /soft/hadoop/etc
+		$>cp -r ha full
+
+	7.修改core-site.xml
+		[core-site.xml]
+		<?xml version="1.0"?>
+		<configuration>
+				<property>
+						<name>fs.defaultFS</name>
+						<value>hdfs://s101:8020/</value>
+				</property>
+				<property>
+						 <name>hadoop.tmp.dir</name>
+						<value>/home/centos/hadoop/full</value>
+				</property>
+		</configuration>
+		
+	8.修改hdfs-site.xml
+		<?xml version="1.0" encoding="UTF-8"?>
+		<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+		<configuration>
+			<property>
+					<name>dfs.replication</name>
+					<value>3</value>
+			</property>
+			<property>
+					  <name>dfs.namenode.secondary.http-address</name>
+					  <value>s105:50090</value>
+			</property>
+			<!-- NN的多目录配置 -->
+			<property>
+					 <name>dfs.namenode.name.dir</name>
+					 <value>file://${hadoop.tmp.dir}/dfs/name1,file://${hadoop.tmp.dir}/dfs/name2</value>
+			</property>
+			<!-- DN的多目录配置 -->
+			<property>
+					 <name>dfs.datanode.data.dir</name>
+					 <value>file://${hadoop.tmp.dir}/dfs/data1,file://${hadoop.tmp.dir}/dfs/data2</value>
+			</property>
+			<property>
+					 <name>dfs.namenode.fs-limits.min-block-size</name>
+					 <value>512</value>
+			</property>
+			<property>
+					<name>dfs.hosts</name>
+					<value>/soft/hadoop/etc/full/dfs_include.conf</value>
+			</property>
+			<property>
+					<name>dfs.hosts.exclude</name>
+					<value>/soft/hadoop/etc/full/dfs_exclude.conf</value>
+			</property>
+		</configuration>
+	
+	9.分发full目录
+		$>xsync.sh /soft/hadoop/etc/full
+	
+	10.*****修改hadoop软连接*****
+		$>xcall.sh "ln -sfT /soft/hadoop/etc/full /soft/hadoop/etc/hadoop"
+
+	11.格式化namenode
+		$>hadoop namenode -format
+		
+	12.启动集群
+		$>start-dfs.sh
+
+	13.编写脚本，完成hadoop集群模式切换
+		[xchhadoop.sh]
+		#!/bin/bash
+		stop-all.sh
+		xcall.sh "ln -sfT /soft/hadoop/etc/$1 /soft/hadoop/etc/hadoop"
+		start-all.sh
+	
+	14.使用脚本进行切换
+		$>xchhadoop.sh ha
+				
+
+		
+使用zk实现NN的HA的自动容灾
+---------------------------
+	0.介绍
+		自动容灾引进两个新组件，zk集群和zkfc(ZKFailoverController ).
+		zk集群维护了少量的协同数据，故障发生时，会通知client。
+		自动容灾依赖一下两个方面:
+		a)故障检测
+		  每个NN在ZK中维护了一个session，如果主机故障，则session过期，就会通知其他节点触发容灾处理。
+
+		b)active节点推选
+		  zk提供了简单机制实现独占方式的active节点选举，如果active节点宕机，则other节点上排他锁，表明自己是
+		  下一个active节点。
+		
+		ZKFC监控和管理NN的状态，运行NN节点的主机也会运行ZKFC进程，该进程的主要职责是:
+			1.Health monitoring 
+				zkfc使用健康检查命令周期性ping NN，通过判断相应结果判断是否NN是健康的。 
+
+			2.ZooKeeper session management
+				当nn健康状态下，zkfc持有一个zk的open的session，如果该nn是active，zfc会持有特殊的lock，
+				该lock使用的zk支持的临时节点特性，如果session过期，该lock会自动删除。
+
+			3.ZooKeeper-based election
+				基于zk的选举。
+				如果NN是健康的，并没有其他节点持有lock，自己尝试上锁，如果成功，则赢得选举，执行容灾过程，使得
+				本地的nn成为active。
+		  
+	1.部署zk
+		略.
+	2.停止hadoop集群。
+		$>stop-all.sh
+
+	3.配置zkfc
+		[hdfs-site.xml]
+		<property>
+			<name>dfs.ha.automatic-failover.enabled</name>
+			<value>true</value>
+		</property>
+
+		[core-site.xml]
+		<property>
+			<name>ha.zookeeper.quorum</name>
+			<value>s102:2181,s103:2181,s104:2181</value>
+		</property>
+
+	4.分发配置文件
+		$>xsync.sh hdfs-site.xml
+		$>xsync.sh core-site.xml
+
+	5.在zk中初始化ha的状态
+		$>hdfs zkfc -formatZK
+
+	6.启动hadoop的集群
+		$>start-dfs.sh
+	
+	7.修改hdfs-site.xml
+		<property>
+				<name>dfs.ha.fencing.methods</name>
+				<value>
+						sshfence
+						shell(/bin/true)
+				</value>
+		</property>
+	
+	8.分发hdfs-site.xml文件
+	
+	9.演示容灾。
+		
+		
+ResourceManager的HA部署
+--------------------------
+	1.配置yarn-site.xml
+		<property>
+			<name>yarn.resourcemanager.ha.enabled</name>
+			<value>true</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.cluster-id</name>
+			<value>cluster1</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.ha.rm-ids</name>
+			<value>rm1,rm2</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.hostname.rm1</name>
+			<value>s101</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.hostname.rm2</name>
+			<value>s105</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.webapp.address.rm1</name>
+			<value>s101:8088</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.webapp.address.rm2</name>
+			<value>s105:8088</value>
+		</property>
+		<property>
+			<name>yarn.resourcemanager.zk-address</name>
+			<value>s102:2181,s103:2181,s104:2181</value>
+		</property>
+		<property>
+                <name>yarn.nodemanager.aux-services</name>
+                <value>mapreduce_shuffle</value>
+        </property>
+	
+	2.分发yarn-site.xml
+	
+	3.启动yarn集群
+		$>start-yarn.sh
+
+		//手动启动105的rm
+		$>yarn-daemon.sh start resourcemanager
+			
+	4.管理命令
+		$>yarn rmadmin -getServiceState	rm1						//查看状态
+		$>yarn rmadmin -failover rm2 rm1 --forcemanual			//容灾演练,不支持。
+		$>yarn rmadmin -transitionToActive rm2 --forcemanual	//脑裂，支持
+
+scale
+-------------------
+	伸缩.
+	1.竖直
+		升级硬件，增加内存，换CPU
+
+	2.水平
+		增加新节点。
+
+federation
+-------------------
+	1.介绍
+		对名字空间做负载均衡。不同的NN配置不同的空间。宏观上
+		是一个整体。
+		配置多个名称服务，在每个nameservice下使用HA方式配置。
+
+	2.集群规划
+		[ns1]
+			nn1				//s101
+			nn2				//s102
+		[ns2]
+			nn3				//s103
+			nn4				//s104
+
+	3.编写脚本，xssh-copy-id.sh
+		3.1)在s101上编写脚本xssh-copy-id.sh
+			#!/bin/bash
+			ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa
+
+			for host in `cat /usr/local/bin/.hosts` ;
+			do
+			  tput setaf 2
+			  echo ======== $host ========
+			  tput setaf 7
+			  ssh-copy-id $host
+			done
+
+	4.分别在s102,s103,s104执行以上脚本，完成ssh处理。
+
+	5.准备新的配置目录和本地临时目录
+		$>cd /soft/hadoop/etc
+		$>cp -r ha federation
+	
+	6.修改hdfs-site.xml
+		注意：该文件是s101和s102的配置文件
+		<?xml version="1.0" encoding="UTF-8"?>
+		<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+		<configuration>
+			<property>
+					<name>dfs.nameservices</name>
+					<value>ns1,ns2</value>
+			</property>
+			<!-- **************ns1********************* -->
+			<property>
+					<name>dfs.ha.namenodes.ns1</name>
+					<value>nn1,nn2</value>
+			</property>
+			<property>
+					<name>dfs.namenode.rpc-address.ns1.nn1</name>
+					<value>s101:8020</value>
+			</property>
+			<property>
+					<name>dfs.namenode.rpc-address.ns1.nn2</name>
+					<value>s102:8020</value>
+			</property>
+			<property>
+					<name>dfs.namenode.http-address.ns1.nn1</name>
+					<value>s101:50070</value>
+			</property>
+			<property>
+					<name>dfs.namenode.http-address.ns1.nn2</name>
+					<value>s102:50070</value>
+			</property>
+			<property>
+					<name>dfs.client.failover.proxy.provider.ns1</name>
+					<value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+			</property>
+			<!-- **************ns2********************* -->
+			<property>
+					<name>dfs.ha.namenodes.ns2</name>
+					<value>nn3,nn4</value>
+			</property>
+			<property>
+					<name>dfs.namenode.rpc-address.ns2.nn3</name>
+					<value>s103:8020</value>
+			</property>
+			<property>
+					<name>dfs.namenode.rpc-address.ns2.nn4</name>
+					<value>s104:8020</value>
+			</property>
+			<property>
+					<name>dfs.namenode.http-address.ns2.nn3</name>
+					<value>s103:50070</value>
+			</property>
+			<property>
+					<name>dfs.namenode.http-address.ns2.nn4</name>
+					<value>s104:50070</value>
+			</property>
+			<property>
+					<name>dfs.client.failover.proxy.provider.ns2</name>
+					<value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+			</property>
+			<!--***********************************************-->
+
+			<property>
+					<name>dfs.namenode.shared.edits.dir</name>
+					<!-- ******************注意：后面的目录固定!!!********* -->
+					<!-- ******************注意：后面的目录固定!!!********* -->
+					<!-- ******************注意：后面的目录固定!!!********* -->
+					<!-- ******************注意：后面的目录固定!!!********* -->
+					<!-- ******************注意：后面的目录固定!!!********* -->
+					<value>qjournal://s102:8485;s103:8485;s104:8485/ns1</value>
+			</property>
+
+			<property>
+					<name>dfs.ha.fencing.methods</name>
+					<value>
+							sshfence
+							shell(/bin/true)
+					</value>
+			</property>
+			<property>
+					<name>dfs.ha.fencing.ssh.private-key-files</name>
+					<value>/home/centos/.ssh/id_rsa</value>
+			</property>
+
+			<property>
+					<name>dfs.ha.automatic-failover.enabled</name>
+					<value>true</value>
+			</property>
+			<property>
+					<name>dfs.replication</name>
+					<value>3</value>
+			</property>
+		</configuration>
+	
+	7.分发hdfs-site.xml文件
+		$>xsync.sh hdfs-site.xml
+	
+	8.修改s103和s104上的hdfs-site.xml
+		...
+		<property>
+			<name>dfs.namenode.shared.edits.dir</name>
+			<value>qjournal://s102:8485;s103:8485;s104:8485/ns2</value>
+		</property>
+		...
+
+	9.修改s101的core-site.xml文件
+		<?xml version="1.0"?>
+		<configuration>
+			<property>
+					<name>fs.defaultFS</name>
+					<value>hdfs://mycluster</value>
+			</property>
+			<property>
+					<name>dfs.journalnode.edits.dir</name>
+					<value>/home/centos/hadoop/federation/journalnode</value>
+			</property>
+			<property>
+					 <name>hadoop.tmp.dir</name>
+					<value>/home/centos/hadoop/federation</value>
+			</property>
+			<property>
+					<name>ha.zookeeper.quorum</name>
+					<value>s102:2181,s103:2181,s104:2181</value>
+			</property>
+		</configuration>
+
+	10.分发core-site.xml
+		$>xsync.sh core-site.xml
+
+	11.创建mount.xml文件。
+		<configuration>
+			<property>
+				<name>fs.viewfs.mounttable.ClusterX.homedir</name>
+				<value>/home</value>
+			</property>
+			<property>
+				<name>fs.viewfs.mounttable.ClusterX.link./home</name>
+				<value>hdfs://ns1/home</value>
+			</property>
+			<property>
+				<name>fs.viewfs.mounttable.ClusterX.link./tmp</name>
+				<value>hdfs://ns2/tmp</value>
+			</property>
+			<property>
+				<name>fs.viewfs.mounttable.ClusterX.link./projects/foo</name>
+				<value>hdfs://ns1/projects/foo</value>
+			</property>
+			<property>
+				<name>fs.viewfs.mounttable.ClusterX.link./projects/bar</name>
+				<value>hdfs://ns2/projects/bar</value>
+			</property>
+		</configuration>
+	
+	12.分发mount.xml
+		$>xsync.sh mount.xml
+	
+	13.修改core-site.xml
+		<?xml version="1.0"?>
+		<configuration xmlns:xi="http://www.w3.org/2001/XInclude"> 
+			<xi:include href="mountTable.xml" />
+			<property>
+					<name>fs.defaultFS</name>
+					<value>viewfs://ClusterX</value>
+			</property>
+			<property>
+					<name>dfs.journalnode.edits.dir</name>
+					<value>/home/centos/hadoop/federation/journalnode</value>
+			</property>
+			<property>
+					 <name>hadoop.tmp.dir</name>
+					<value>/home/centos/hadoop/federation</value>
+			</property>
+			<property>
+					<name>ha.zookeeper.quorum</name>
+					<value>s102:2181,s103:2181,s104:2181</value>
+			</property>
+		</configuration>
+
+	14.再次分发core-site.xmlcd 
+		略
+	
+	15.修改软连接
+		$>xcall.sh "ln -sfT /soft/hadoop/etc/federation /soft/hadoop/etc/hadoop"
+
+	15.格式化文件系统
+		15.0)启动JN节点
+			[s102 ~ s104]
+			$>hadoop-daemon.sh start journalnode
+
+		15.1)格式化s101的文件系统
+			$>登录s101
+			$>hdfs namenode -format
+		
+		15.2)复制s101的本地临时目录到s102上
+			$>scp -r federation centos@s102:/home/centos/hadoop/
+		
+		15.3)启动s101名称节点
+			$>hadoop-daemon.sh start namenode
+		
+		15.4)引导standby节点
+			$>hdfs namenode -bootstrapStandby
+
+		15.5)初始化JN
+			$>hdfs namenode -initializeSharedEdits
+
+		15.5')格式化zk
+			$>hdfs zkfc -formatZK
+
+		15.6)启动s102 NN
+			$>hadoop-daemon.sh start namenode
+
+		15.7)格式化s103
+			$>hdfs namenode -format -clusterId CID-120fbdf9-0c75-4eb1-8bdb-de2adf75e488
+
+		15.8)复制s103的本地目录到s104,引导和初始化
+			$>登录s103
+			//复制
+			$>scp -r federation centos@s104:/home/centos/hadoop/
+
+			//启动s103的NN
+			$>hadoop-daemon.sh start namenode
+
+			//引导standby节点
+			$>hdfs namenode -bootstrapStandby
+
+			//初始化JN
+			$>hdfs namenode -initializeSharedEdits
+
+			//格式化zk
+			$>hdfs zkfc -formatZK
+
+		15.8)启动所有数据节点
+			$>hadoop-daemons.sh start datanode
+
+		15.9)自动选出active节点
+			
+
+		15.10)查看webui
+			略
+		15.11)hdfs访问
+			//根据挂载表进行操作
+			$>hdfs dfs -mkdir -p viewfs://ClusterX/home/data			//s101
+			$>hdfs dfs -mkdir -p viewfs://ClusterX/tmp/data				//s101
+			$>hdfs dfs  -put 1.txt /tmp/data						//s101
+			$>hdfs dfs -mkdir -get /home/data/1.txt
+
+			//1.复制配置文件,core-site.xml + mountTable.xml + hdfs-site.xml
+			//2.编程API
+				public class TestFederation {
+					@Test
+					public void testGet() throws Exception {
+						Configuration conf = new Configuration();
+						FileSystem fs = FileSystem.get(conf) ;
+						FSDataInputStream in = fs.open(new Path("/home/data/1.txt"));
+						ByteArrayOutputStream baos = new ByteArrayOutputStream() ;
+						IOUtils.copyBytes(in,baos , 1024);
+						baos.close();
+						in.close();
+						System.out.println(new String(baos.toByteArray()));
+					}
+				}

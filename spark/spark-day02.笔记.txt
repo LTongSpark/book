@@ -1,0 +1,146 @@
+Spark
+---------------
+	通用计算引擎。
+	基于内存计算。
+	hadoop hdfs mapreduce
+	spark mapreduce
+	100x / 10x
+	内存计算 ： job之间(shuffle之间)
+
+	[RDD]
+		resilient distributed dataset ,
+		弹性分布式数据集。
+		1.分区列表
+		2.函数
+		3.依赖列表
+		4.partitioner
+		5.首选位置列表
+
+集群模式
+-------------
+	1.local
+	2.standalone
+		master
+		worker
+		
+	3.mesos
+	4.yarn
+
+RDD的算子
+----------------
+	[transformation]
+	map
+	flatMap
+	filter
+	reduceByKey()
+	groupBy
+
+	[action]
+	collect
+	first
+	take
+	foreach()
+	reduce()
+	save...
+
+spark运行
+---------------
+	spark-submit --class ... --master ... xxx.jar
+
+
+spark相关概念
+---------------
+	1.RDD
+		resilient distributed dataset,弹性(容错)分布式数据集。
+		等同于java集合。延迟计算的。
+		RDD的行为包括transform(变换) + action(动作).
+		不可变，分区化的元素集合可以进行并行计算。
+		包含基本操作：map、filter、persist等。
+		PairRDDFunctions包含针对kv的操作
+		[5个主要属性]
+		a.分区列表
+		b.计算每个切片的函数
+		c.依赖列表
+		e.(可选)针对kv的RDD的分区类
+		f.(可选)首选位置列表(hdfs)。
+
+	2.SparkContext
+		spark程序的主入口点，代表到cluster的连接，可以创建RDD、累加器、广播变量、
+		每个JVM只有一个SparkContext，
+
+	3.DAGScheduler
+		Direct acycline graph,有向无环图调度器。
+		面向stage的高级调出层。计算每个job的stage DAG，跟踪RDD和stage，寻找最短路径。
+		提交taskset给下层的调度器(task调度器),taskset包含的是完全独立的任务(可以在cluster直接运行).
+		stage划分以shuffle边界，具有窄依赖的RDD操作(map | filter)进入同一taskset的管线中。
+		Shuffle依赖的操作需要多个Stage，上一个的输出做下一个的输入。
+		每个Stage只有一次依赖于其他stage的shuffle操作。
+		DAG调度器决定task的首选运行位置，
+		DAG调度器处理因为shuffle输出文件丢失导致的故障。不是由shuffle输出文件丢失引发的故障由task调度器处理。
+		取消整个stage之前重试少量次数。
+
+		job :ActiveJob表示，最顶层的工作单元。action发生时，提交的activeJob
+		stage :task集合，计算中间结果。同一RDD的每个分区都执行相同的计算过程。stage以shuffle边界作为划分标准。
+		task :工作单元，每个task发送给一个machine.
+
+	4.ActiveJob
+		DAG调度器中运行的job，job类型有两种。
+		一种是result job，执行action，对ResultStage进行计算。
+		另一个是MapStage job,计算shuffleMapStage的map输出。
+		使用finalStage字段来区分是哪种类型.
+	
+	5.Stage
+		并行执行的task集合，所有task运行同一函数。所有task都有相同的shuffle依赖，DAG调度器以拓扑顺序执行stage。
+		stage类型有两种，
+		一种是ShuffleMapStage,的输出是下一个stage的输入。
+		另一种是ResultStage，通过执行一个rdd的函数运行action.
+		每个stage都有一个firstJobid，标识第一个提交的stage，每个阶段都对应一个rdd.
+		Stage类型有两种：
+		5.1)ShuffleMapStage
+			在RDD的某些分区上执行函数计算结果
+
+		5.2)ResultStage
+			在RDD的某些分区上执行函数计算结果
+
+	6.Task
+		Spark执行单元，两种类型:ShuffleMapTask + ResultTask.
+		Job由多个Stage构成，每个job的最后stage由多个ResultTask构成,之前的stage由多个ShuffleMapTask构成。
+		ResultTask执行task并将结果回传到Driver(执行入口点)。
+		ShuffleMapTask执行task并按照分区类将task的输出划分到多个bucket(分区)中。
+
+	7.TaskScheduler
+		底层任务调度器接口，当前只有TaskSchedulerImpl实现。
+		该接口可插拔，可以使用不同的实现类。每个任务调度器为一个SparkContext调度任务.
+		该调度器从上层调度器(DagScheduler)得到提交过来的task set，并发送任务给集群。
+		运行在driver端,
+
+		通过后台调度器为多种集群类型调度任务。是过渡阶段。是以taskset为单位进行调度。
+
+	8.Executor
+		spark执行程序，通过线程池运行task.
+
+	9.依赖
+		Dependency.
+		RDD的分区和上级RDD分区之间的对应关系。
+
+		[窄依赖]
+		子RDD的每个分区依赖于父RDD的少量分区。
+		OneToOneDependency
+		RangeDependency
+		PruneDependency
+
+		[宽依赖]
+		需要shuffle，
+		ShuffleDependency
+
+	10.driver
+		驱动。
+		client : 入口程序。
+
+
+hadoop :
+job
+rdd
+stage
+
+task : mapTask reduceTask

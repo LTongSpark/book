@@ -1,0 +1,93 @@
+ ;phoenix
+-------------
+	1.介绍
+		构建在hbase之上的一个工具，方便完成二级索引，类SQL方式查询hbase数据。
+		是一个client工具，不需要分发。
+	2.安装
+		2.1)
+			下载
+			tar
+			ln
+
+			/etc/profile
+			
+			source
+
+		2.3)复制phoenix/phoenix-4.9.0-HBase-1.2-server.jar到hbase lib下。
+			给jar内置很多phoenix自定义的协处理器实现。
+			$>cp phoenix-4.9.0-HBase-1.2-server.jar /soft/hbase/lib
+
+		2.4)分发该jar到整个hbase集群
+			$>xsych.sh /soft/hbase/lib/phoenix-4.9.0-HBase-1.2-server.jar
+
+		2.5)重启hbase
+			$>stop-hbase.sh
+			$>start-hbase.sh
+		
+		2.6)进入phoenix命令行
+			$>phoenix/bin/sqlline.sh s102
+			$phoenix>!help						//查看帮助
+			$phoenix>!quit						//退出
+
+			--查询
+			$phoenix>select * from SYSTEM.STATS;//
+
+			--建表
+			$phoenix>phoenix:xx>create table MYDB.T1(id INTEGER not null primary key,name varchar,age integer) ;
+
+			--查询
+			$phoenix>select * from mydb.t1 ;
+
+			--插入数据
+			$phoenix>upsert into mydb.t1(id,name,age) values(1,'tom',12) ;
+
+			--创建索引，需要单独配置hbase-site.xml文件,见下文。
+			$phoenix>create index idx_mydb_t1_name on mydb.t1(name) ;
+
+			--删除索引
+			$sqllline>drop index idx_mydb_t1_name on mydb.t1 ;
+
+
+			
+支持phoenix的二级索引操作，需要配置hbase的codec
+------------------------------------------------
+	1.修改hbase-site.xml
+		<configuration>
+				<property>
+						<name>hbase.rootdir</name>
+						<value>hdfs://mycluster/hbase</value>
+				</property>
+				<property>
+						<name>hbase.cluster.distributed</name>
+						<value>true</value>
+				</property>
+				<property>
+						<name>hbase.zookeeper.quorum</name>
+						<value>s102:2181,s103:2181,s104:2181</value>
+				</property>
+				<property>
+						<name>hbase.coprocessor.region.classes</name>
+						<value>com.it18zhang.hbase.coprocessor.CallLogCoprocessor</value>
+				</property>
+				<property>
+						<name>hbase.regionserver.wal.codec</name>
+						<value>org.apache.hadoop.hbase.regionserver.wal.IndexedWALEditCodec</value>
+				</property>
+		</configuration>
+
+	2.分发hbase-site.xml
+
+	3.重启hbase集群
+		
+	4.进入phoenix client
+		$phoenix>
+
+client通过jdbc API访问hbase
+-----------------------------
+	1.在hbase模块的依赖中添加jar
+		phoenix-4.9.0-HBase-1.2-client.jar
+
+	2.
+
+	3.
+	5.
